@@ -1,0 +1,13 @@
+[package]
+name = "sekuro-settings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sekuro-common.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+gtk4 = { version = "0.11.5", features = ["v4_14"] }
+sekuro-panels.workspace = true

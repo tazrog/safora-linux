@@ -1,0 +1,5 @@
+# Sekuro system defaults. Per-user settings live in ~/.config/sekuro/config.toml (edit with sekuro-settings).
+[general]
+terminal = "alacritty"
+launcher = "fuzzel"
+autostart = ["sekuro-bar"]

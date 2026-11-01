@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Build the Sekuro Linux live/installer ISO.
+#
+#   sudo ./distro/build-iso.sh
+#
+# Needs root because mkarchiso installs packages into a chroot and mounts /proc, /sys and /dev.
+# Everything happens inside a throw-away Arch Linux root unpacked from the official bootstrap
+# tarball, so nothing on the host system is modified (apart from /var/tmp/sekuro-build, which is
+# removed on success).
+set -Eeuo pipefail
+
+[[ $EUID -eq 0 ]] || { echo "Run this script with sudo." >&2; exit 1; }
+
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+TOP=$(dirname "$HERE")
+BOOTSTRAP=${BOOTSTRAP:-$TOP/work/dl/bootstrap.tar.zst}
+BIN=$TOP/src/target/release
+WORK=${WORK:-/var/tmp/sekuro-build}
+OUT=$TOP/out
+OWNER=${SUDO_USER:-root}
+
+for b in sekurowm sekuroctl sekuro-bar sekuro-settings sekuro-installer; do
+    [[ -x $BIN/$b ]] || { echo "Missing $BIN/$b — build the release binaries first (see README.md)." >&2; exit 1; }
+done
+[[ -f $BOOTSTRAP ]] || { echo "Missing Arch bootstrap tarball: $BOOTSTRAP" >&2; exit 1; }
+
+ROOT=$WORK/root
+CACHE=${CACHE:-/var/tmp/sekuro-pkg-cache}   # package downloads survive between builds
+# FAST=1 is for development iterations only: skips signature checks and compresses lightly.
+FAST=${FAST:-0}
+mounted=0
+umount_all() {
+    [[ $mounted == 1 ]] || return 0
+    for m in var/cache/pacman/pkg dev/pts dev sys proc; do umount -lf "$ROOT/$m" 2>/dev/null || true; done
+    mounted=0
+}
+trap umount_all EXIT
+
+echo "==> Preparing build root in $ROOT"
+umount -lf "$ROOT"/{var/cache/pacman/pkg,dev/pts,dev,sys,proc} 2>/dev/null || true
+rm -rf "$WORK"
+mkdir -p "$ROOT"
+tar --zstd -xpf "$BOOTSTRAP" -C "$ROOT" --strip-components=1
+
+echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' > "$ROOT/etc/pacman.d/mirrorlist"
+sed -i 's/^#DisableSandbox/DisableSandbox/; s/^CheckSpace/#CheckSpace/; s/^#ParallelDownloads.*/ParallelDownloads = 5/' "$ROOT/etc/pacman.conf"
+cp -L /etc/resolv.conf "$ROOT/etc/resolv.conf"
+
+mount --bind /proc "$ROOT/proc"
+mount --bind /sys "$ROOT/sys"
+mount --bind /dev "$ROOT/dev"
+mount --bind /dev/pts "$ROOT/dev/pts"
+mkdir -p "$CACHE" "$ROOT/var/cache/pacman/pkg"
+mount --bind "$CACHE" "$ROOT/var/cache/pacman/pkg"
+mounted=1
+
+in_root() { chroot "$ROOT" /usr/bin/env -i HOME=/root TERM="${TERM:-dumb}" LANG=C.UTF-8 PATH=/usr/local/sbin:/usr/local/bin:/usr/bin "$@"; }
+
+echo "==> Installing archiso"
+in_root pacman-key --init
+in_root pacman-key --populate archlinux
+in_root pacman -Syu --noconfirm --needed archiso
+
+echo "==> Assembling the profile"
+PROFILE=$ROOT/build/profile
+mkdir -p "$PROFILE" "$ROOT/build/out"
+cp -a "$HERE/profile/." "$PROFILE/"
+install -Dm755 "$BIN/sekurowm"          "$PROFILE/airootfs/usr/bin/sekurowm"
+install -Dm755 "$BIN/sekuroctl"         "$PROFILE/airootfs/usr/bin/sekuroctl"
+install -Dm755 "$BIN/sekuro-bar"        "$PROFILE/airootfs/usr/bin/sekuro-bar"
+install -Dm755 "$BIN/sekuro-settings"   "$PROFILE/airootfs/usr/bin/sekuro-settings"
+install -Dm755 "$BIN/sekuro-installer"  "$PROFILE/airootfs/usr/bin/sekuro-installer"
+install -Dm755 "$HERE/installer/sekuro-install-backend" "$PROFILE/airootfs/usr/lib/sekuro/sekuro-install-backend"
+cp "$HERE/profile/pacman.conf" "$PROFILE/pacman.conf"
+if [[ $FAST == 1 ]]; then
+    echo "==> FAST mode: signature checks off, light compression (do not ship this ISO)"
+    sed -i 's/^SigLevel .*/SigLevel = Never/' "$PROFILE/pacman.conf"
+    sed -i "s/'-Xcompression-level' '15'/'-Xcompression-level' '3'/" "$PROFILE/profiledef.sh"
+fi
+# The live image's own pacman needs the same mirrors as the build root.
+cp "$ROOT/etc/pacman.d/mirrorlist" "$ROOT/build/mirrorlist.build"
+
+echo "==> Building the ISO (this takes a while: it downloads ~2 GB and compresses the image)"
+in_root mkarchiso -v -w /build/work -o /build/out /build/profile
+
+mkdir -p "$OUT"
+cp "$ROOT"/build/out/*.iso "$OUT/"
+chown -R "$OWNER": "$OUT" 2>/dev/null || true
+ls -lh "$OUT"
+
+echo "==> Cleaning up"
+umount_all
+rm -rf "$WORK"
+echo "Done: $(ls "$OUT"/*.iso)"

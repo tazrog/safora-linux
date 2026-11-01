@@ -1,0 +1,10 @@
+# build output and downloads
+/work/
+/out/
+/src/target/
+*.iso
+# scratch screenshots and logs from VM testing
+/src/*.png
+/src/*.log
+*.log
+/pack.txt

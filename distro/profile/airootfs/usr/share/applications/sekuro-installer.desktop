@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Install Sekuro
+Exec=sekuro-installer
+Icon=system-software-install
+Categories=System;

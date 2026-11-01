@@ -1,0 +1,10 @@
+#!/bin/bash
+# Install Claude Code (Anthropic's command-line assistant) from the npm registry. Needs a network connection.
+# Notes: the system default umask is 077, so install with 022 or other users couldn't run it; and npm must be
+# allowed to run this one package's post-install step, which sets up the native binary.
+set -e
+[ "$(id -u)" -eq 0 ] || exec sudo "$0" "$@"
+umask 022
+command -v npm >/dev/null || pacman -Syu --needed --noconfirm nodejs npm
+echo "Installing Claude Code from npm (https://www.npmjs.com/package/@anthropic-ai/claude-code)..."
+exec npm install -g --no-fund --no-audit --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code

@@ -1,0 +1,25 @@
+#!/bin/sh
+# Start a Sekuro session. Run by greetd (as the logged-in user) or from a TTY.
+#   sekuro-session          normal desktop
+#   sekuro-session --live   live medium: also launch the installer
+umask 077
+export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=Sekuro XDG_SESSION_DESKTOP=Sekuro
+export XCURSOR_THEME="${XCURSOR_THEME:-Adwaita}" XCURSOR_SIZE="${XCURSOR_SIZE:-24}"
+export GTK_USE_PORTAL=0
+export MOZ_ENABLE_WAYLAND=1 QT_QPA_PLATFORM=wayland ELECTRON_OZONE_PLATFORM_HINT=wayland
+export _JAVA_AWT_WM_NONREPARENTING=1
+
+[ -n "$XDG_RUNTIME_DIR" ] || { echo "sekuro-session: no XDG_RUNTIME_DIR (is logind running?)" >&2; exit 1; }
+
+extra=""
+[ "$1" = "--live" ] && extra="--exec sekuro-installer"
+# In VirtualBox, follow the VM window size (full-screen mode, window resizing).
+if [ "$(systemd-detect-virt 2>/dev/null)" = "oracle" ] && command -v VBoxDRMClient >/dev/null 2>&1; then
+    extra="$extra --exec VBoxDRMClient"
+fi
+
+logdir="${XDG_STATE_HOME:-$HOME/.local/state}/sekuro"
+mkdir -p "$logdir"
+# Start the compositor inside its own D-Bus session so GTK apps can talk to each other.
+# shellcheck disable=SC2086
+exec dbus-run-session -- sekurowm $extra >"$logdir/sekurowm.log" 2>&1

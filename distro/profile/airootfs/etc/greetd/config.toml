@@ -1,0 +1,10 @@
+[terminal]
+vt = 1
+
+[default_session]
+command = "tuigreet --time --cmd sekuro-session"
+user = "greeter"
+
+[initial_session]
+command = "sekuro-session --live"
+user = "live"

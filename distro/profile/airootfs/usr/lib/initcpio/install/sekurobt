@@ -1,0 +1,39 @@
+#!/bin/bash
+# mkinitcpio hook: lets a previously paired Bluetooth keyboard type the disk passphrase.
+# Inert unless the installer created /etc/sekurobt/enabled.
+#
+# SECURITY NOTE: the pairing key has to live inside the (unencrypted) initramfs on /boot so the
+# keyboard can reconnect before the disk is unlocked. Anyone who can read /boot can learn that key.
+
+build() {
+    if [[ ! -f /etc/sekurobt/enabled ]]; then
+        return 0
+    fi
+
+    local m
+    for m in bluetooth btusb btintel btbcm btrtl btmtk hidp uhid hid-generic evdev; do
+        add_module "$m" 2>/dev/null || true
+    done
+
+    add_binary /usr/lib/bluetooth/bluetoothd
+    add_binary /usr/bin/bluetoothctl
+    add_binary /usr/bin/dbus-daemon
+
+    [[ -f /etc/bluetooth/main.conf ]] && add_file /etc/bluetooth/main.conf
+    add_file /etc/sekurobt/dbus.conf /etc/sekurobt/dbus.conf
+    add_file /etc/sekurobt/devices /etc/sekurobt/devices
+
+    local f
+    while IFS= read -r -d '' f; do
+        add_file "$f" "/var/lib/bluetooth/${f#/etc/sekurobt/state/}"
+    done < <(find /etc/sekurobt/state -type f -print0 2>/dev/null)
+
+    add_runscript
+}
+
+help() {
+    cat <<HELPEOF
+Starts a minimal Bluetooth stack in early userspace so a paired keyboard can unlock the disk.
+Enabled by the Sekuro installer; see /etc/sekurobt/.
+HELPEOF
+}
