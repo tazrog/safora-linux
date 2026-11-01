@@ -14,6 +14,17 @@ compositor, a GTK4 status bar and a graphical installer with full-disk encryptio
 | `src/crates/sekuro-common` | Shared config + IPC types. |
 | `distro/` | archiso profile, installer backend script, ISO and VirtualBox helper scripts. |
 
+## Download
+
+The installer ISO is attached to the [latest release](https://github.com/tazrog/sekuro-linux/releases/latest) (about 1.5 GB). Check it before writing it to a USB stick:
+
+```bash
+sha256sum -c sekuro-2026.11.01-x86_64.iso.sha256
+```
+
+Boot it in UEFI mode, run the installer from the live desktop, and choose disk encryption. It was tested in VirtualBox only; see *Tested* and *Known issues* below
+before putting it on real hardware, and keep your data backed up.
+
 ## The desktop
 
 * **Smart auto-tiling**: a new window splits the *focused* window along its longer side — wide windows split side by side, tall windows split top/bottom. Other layouts (spiral, master + stack, columns) cycle with `Mod+Space`.
