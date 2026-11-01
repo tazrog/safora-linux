@@ -143,3 +143,7 @@ VBoxManage startvm Sekuro-Test-uefi
 scripts/sandbox.sh bash /scripts/nested-test.sh     # runs sekurowm in a window on your desktop + bar + terminals
 scripts/sandbox.sh cargo test                       # in /src: unit tests
 ```
+
+## License
+
+MIT, see [LICENSE](LICENSE). Bundled and installed software keeps its own licenses.
