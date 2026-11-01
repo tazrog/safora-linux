@@ -257,15 +257,17 @@ impl XdgDecorationHandler for SaforaState {
     fn request_mode(&mut self, toplevel: ToplevelSurface, _mode: DecoMode) {
         // A tiling WM draws only borders; always ask clients to skip their own title bars.
         toplevel.with_pending_state(|s| s.decoration_mode = Some(DecoMode::ServerSide));
+        // The client is waiting for a decoration configure even if the mode didn't change, so always send one
+        // (send_pending_configure would skip it when nothing else is pending).
         if toplevel.is_initial_configure_sent() {
-            toplevel.send_pending_configure();
+            toplevel.send_configure();
         }
     }
 
     fn unset_mode(&mut self, toplevel: ToplevelSurface) {
         toplevel.with_pending_state(|s| s.decoration_mode = Some(DecoMode::ServerSide));
         if toplevel.is_initial_configure_sent() {
-            toplevel.send_pending_configure();
+            toplevel.send_configure();
         }
     }
 }

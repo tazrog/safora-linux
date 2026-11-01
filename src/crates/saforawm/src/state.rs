@@ -424,7 +424,9 @@ impl SaforaState {
         for c in &self.clients {
             if let Some(top) = c.window.toplevel() {
                 let active = Some(c.id) == id;
-                if c.window.set_activated(active) {
+                // Before its first commit a window must not get a configure (the initial one is sent on that
+                // commit); sending it early also skipped the decoration answer, so clients drew their own title bars.
+                if c.window.set_activated(active) && top.is_initial_configure_sent() {
                     top.send_pending_configure();
                 }
             }

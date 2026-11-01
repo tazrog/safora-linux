@@ -78,7 +78,7 @@ pub fn apply_system_fonts(cfg: &Config) -> io::Result<()> {
         fs::write(
             &path,
             format!(
-                "{ALACRITTY_MARK} (delete this line to take over the file)\n[font]\nsize = {}\n[font.normal]\nfamily = \"{}\"\n[window]\nopacity = 0.96\npadding = {{ x = 6, y = 6 }}\n",
+                "{ALACRITTY_MARK} (delete this line to take over the file)\n[font]\nsize = {}\n[font.normal]\nfamily = \"{}\"\n[window]\ndecorations = \"None\"\nopacity = 0.96\npadding = {{ x = 6, y = 6 }}\n",
                 scaled(f.monospace_size),
                 f.monospace.replace('"', "")
             ),
