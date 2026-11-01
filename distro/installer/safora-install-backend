@@ -46,9 +46,12 @@ UEFI=$(get uefi)
 BT_KB=$(get bt_keyboard)
 CLAUDE_CODE=$(get claude_code)
 CLAUDE_WEB=$(get claude_web)
+WIPE=$(get wipe)
+[[ -n $WIPE ]] || WIPE=none
 
 [[ $DISK =~ ^/dev/[A-Za-z0-9._-]+$ ]]        || fail "invalid disk path"
 [[ $DRY == 1 || -b $DISK ]]                   || fail "$DISK is not a block device"
+[[ $WIPE == none || $WIPE == quick || $WIPE == full ]] || fail "invalid erase mode"
 [[ $USERNAME =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]   || fail "invalid username"
 [[ $USERNAME != root && $USERNAME != live ]]  || fail "reserved username"
 [[ $HOSTNAME_ =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]] || fail "invalid hostname"
@@ -78,6 +81,30 @@ if [[ $DRY != 1 ]]; then
     for p in $(lsblk -nrpo NAME "$DISK" | tac); do umount "$p" 2>/dev/null || true; done
     [[ -e /dev/mapper/$CRYPT_NAME ]] && cryptsetup close "$CRYPT_NAME" || true
 fi
+case $WIPE in
+    quick)
+        progress 3 "Discarding every block of $DISK"
+        if [[ $DRY == 1 ]]; then echo "+ blkdiscard -f -s $DISK"
+        elif blkdiscard -f -s "$DISK" 2>/dev/null; then echo "secure erase done"
+        elif blkdiscard -f "$DISK" 2>/dev/null; then echo "note: this drive has no secure erase; an ordinary discard was used, so old data may survive in spare flash. Use the full overwrite if that matters."
+        else echo "note: this drive does not support discard; nothing was erased early. Use the full overwrite instead."
+        fi ;;
+    full)
+        progress 3 "Overwriting $DISK with random data (this can take a long time)"
+        if [[ $DRY == 1 ]]; then echo "+ shred -v -n 1 -f $DISK"
+        else
+            shred -v -n 1 -f "$DISK" 2>&1 | tr '\r' '\n' | {
+                last=-1
+                while read -r line; do
+                    if [[ $line =~ ([0-9]+)% ]] && [[ ${BASH_REMATCH[1]} != "$last" ]]; then
+                        last=${BASH_REMATCH[1]}
+                        echo "PROGRESS 3 Overwriting $DISK with random data ($last%)"
+                    fi
+                done
+            }
+            [[ ${PIPESTATUS[0]} -eq 0 ]] || fail "the secure overwrite failed"
+        fi ;;
+esac
 run wipefs -af "$DISK"
 run sgdisk --zap-all "$DISK"
 

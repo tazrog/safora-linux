@@ -73,6 +73,8 @@ Default shortcuts (`Mod` = Super, or Alt when nested): `Mod+Enter` terminal · `
 * **Bluetooth keyboard at the unlock screen** (experimental, opt-in, untested on real hardware): pair the keyboard in the live session,
   tick the option on the encryption page, and the installer adds a `saforabt` initramfs hook. Trade-off: the pairing key is stored in the
   unencrypted `/boot`. A USB keyboard always works.
+* **Secure erase before installing**: the disk page offers *Quick* (discard every block; a real secure erase where the drive supports it, otherwise an ordinary discard, which the installer says plainly) or *Full*
+  (one pass of random data over the whole drive with `shred`; slow, best for hard disks). On SSDs, a full overwrite cannot reach spare flash cells, so prefer *Quick*, or the drive's own secure-erase/sanitize command, when old data must not be recoverable.
 * Installer: GPT, **ext4** everywhere (the EFI system partition is FAT32 because UEFI requires it),
   optional **LUKS2** (AES-256-XTS, argon2id) around the root filesystem. A separate 1 GiB unencrypted
   `/boot` holds the kernel so GRUB doesn't need to unlock the volume.

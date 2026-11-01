@@ -32,6 +32,8 @@ struct Plan {
     bt_keyboard: bool,
     claude_code: bool,
     claude_web: bool,
+    /// "none", "quick" (discard every block) or "full" (one pass of random data).
+    wipe: String,
 }
 
 #[derive(Debug, Clone)]
@@ -274,6 +276,22 @@ fn build_ui(app: &gtk::Application) {
     let warn = gtk::Label::new(Some("⚠  Everything on the selected disk will be permanently erased."));
     warn.set_xalign(0.0);
     disk_page.append(&warn);
+    let wipe_modes = [
+        "Normal: remove the old partitions (fast)",
+        "Quick secure erase: discard every block (fast; best for SSD/NVMe)",
+        "Full secure erase: overwrite the whole drive once with random data (slow; best for hard disks)",
+    ];
+    let wipe_values = ["none", "quick", "full"];
+    let wipe = gtk::DropDown::from_strings(&wipe_modes);
+    disk_page.append(&field("Erase the drive before installing", &wipe));
+    let wipe_note = gtk::Label::new(Some(
+        "A full overwrite can take from minutes to many hours depending on the drive's size and speed. Quick erase asks the drive to discard everything; \
+         drives that cannot do a secure erase only get an ordinary discard, so use the full overwrite when old data must not be recoverable.",
+    ));
+    wipe_note.set_wrap(true);
+    wipe_note.set_xalign(0.0);
+    wipe_note.add_css_class("dim-label");
+    disk_page.append(&wipe_note);
 
     // ---- Page: encryption
     let enc_page = vbox();
@@ -607,8 +625,8 @@ fn build_ui(app: &gtk::Application) {
 
     next.connect_clicked({
         let (show, current, pages, error, plan, win) = (show.clone(), current.clone(), pages.clone(), error.clone(), plan.clone(), win.clone());
-        let (disk_list, disks, enc_switch, pass1, tz, km, full, user, host, up1, bt_check, claude_code, claude_web) =
-            (disk_list.clone(), disks.clone(), enc_switch.clone(), pass1.clone(), tz.clone(), km.clone(), full.clone(), user.clone(), host.clone(), up1.clone(), bt_check.clone(), claude_code.clone(), claude_web.clone());
+        let (disk_list, disks, enc_switch, pass1, tz, km, full, user, host, up1, bt_check, claude_code, claude_web, wipe) =
+            (disk_list.clone(), disks.clone(), enc_switch.clone(), pass1.clone(), tz.clone(), km.clone(), full.clone(), user.clone(), host.clone(), up1.clone(), bt_check.clone(), claude_code.clone(), claude_web.clone(), wipe.clone());
         let (summary, progress, status, log, done_label_next) = (summary.clone(), progress.clone(), status.clone(), log.clone(), next.clone());
         move |_| {
             let i = *current.borrow();
@@ -630,6 +648,7 @@ fn build_ui(app: &gtk::Application) {
                 p.encrypt = enc_switch.is_active();
                 p.passphrase = pass1.text().to_string();
                 p.bt_keyboard = enc_switch.is_active() && bt_check.is_active();
+                p.wipe = wipe_values.get(wipe.selected() as usize).copied().unwrap_or("none").to_string();
                 p.claude_code = claude_code.is_active();
                 p.claude_web = claude_web.is_active();
                 p.timezone = selected_string(&tz);
@@ -639,9 +658,14 @@ fn build_ui(app: &gtk::Application) {
                 p.hostname = host.text().to_string();
                 p.password = up1.text().to_string();
                 summary.set_markup(&format!(
-                    "<b>Disk</b>\n{}\n\n<b>Encryption</b>\n{}\n\n<b>Account</b>\n{} ({}) on computer “{}”\n\n<b>Locale</b>\n{} · keyboard {}\n\n\
+                    "<b>Disk</b>\n{}\n{}\n\n<b>Encryption</b>\n{}\n\n<b>Account</b>\n{} ({}) on computer “{}”\n\n<b>Locale</b>\n{} · keyboard {}\n\n\
                      <b>Extras</b>\n{}\n\nPartitions: {} /boot (ext4) and an ext4 root{}.",
                     glib::markup_escape_text(disk.as_ref().map(|d| d.label.as_str()).unwrap_or("?")),
+                    match p.wipe.as_str() {
+                        "quick" => "Secure erase first: discard every block",
+                        "full" => "Secure erase first: overwrite the whole drive with random data (slow)",
+                        _ => "No extra erase",
+                    },
                     if p.encrypt { "LUKS2 full-disk encryption" } else { "None" },
                     glib::markup_escape_text(&p.fullname),
                     glib::markup_escape_text(&p.username),
