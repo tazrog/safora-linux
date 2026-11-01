@@ -91,7 +91,7 @@ fn main() -> glib::ExitCode {
         add_page(&stack, "fonts", "Fonts", fonts_page(&ctx));
         add_page(&stack, "sound", "Sound", safora_panels::sound_panel());
         add_page(&stack, "network", "Network", safora_panels::network_panel());
-        add_page(&stack, "bluetooth", "Bluetooth", safora_panels::bluetooth_panel());
+        add_page(&stack, "bluetooth", "Bluetooth", more::bluetooth_page());
         add_page(&stack, "apps", "Apps & startup", apps_page(&ctx));
         add_page(&stack, "power", "Power", more::power_page(&ctx));
         add_page(&stack, "input", "Input devices", more::input_page(&ctx));

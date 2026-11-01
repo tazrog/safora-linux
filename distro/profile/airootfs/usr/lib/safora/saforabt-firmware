@@ -1,0 +1,24 @@
+#!/bin/bash
+# Print the firmware files this machine's Bluetooth adapter loaded during this boot (one path per line),
+# so the saforabt initramfs hook can bring them along. Without them, many adapters (Intel, Realtek, ...)
+# stay in bootloader mode after a cold start and the keyboard can't connect before the disk is unlocked.
+set -uo pipefail
+FW=/usr/lib/firmware
+declare -A seen
+emit() {
+    local base=$1 f
+    for f in "$FW/$base" "$FW/$base.zst" "$FW/$base.xz"; do
+        if [[ -f $f && -z ${seen[$f]:-} ]]; then seen[$f]=1; echo "$f"; return 0; fi
+    done
+    return 1
+}
+journalctl -k -b -o cat --no-pager 2>/dev/null \
+    | grep -iE 'bluetooth|btusb|rtl|bcm|mt79' \
+    | grep -oE '\b(intel|rtl_bt|brcm|mediatek|qca)/[A-Za-z0-9._-]+' \
+    | sort -u \
+    | while read -r name; do
+        emit "$name"
+        # Intel loads a .ddc settings file alongside the .sfi firmware.
+        [[ $name == intel/ibt-*.sfi ]] && emit "${name%.sfi}.ddc"
+      done
+exit 0

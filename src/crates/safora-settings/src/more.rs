@@ -485,3 +485,114 @@ pub fn input_page(ctx: &Rc<Ctx>) -> gtk::Box {
     p.append(&note("Mouse and touchpad changes apply immediately."));
     p
 }
+
+// ------------------------------------------------------------------------- bluetooth keyboard unlock
+
+/// Bluetooth page: the shared device panel plus "unlock the disk with a Bluetooth keyboard".
+pub fn bluetooth_page() -> gtk::Box {
+    let p = page();
+    p.append(&safora_panels::bluetooth_panel());
+    p.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    p.append(&bt_unlock_section());
+    p
+}
+
+fn bt_unlock_enabled() -> bool {
+    std::path::Path::new("/etc/saforabt/enabled").exists()
+}
+
+fn disk_encrypted() -> bool {
+    std::fs::read_to_string("/proc/cmdline").map(|c| c.contains("cryptdevice=")).unwrap_or(false)
+}
+
+fn bt_unlock_section() -> gtk::Box {
+    let b = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    b.append(&heading("Unlock the disk with a Bluetooth keyboard"));
+
+    let r = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let state = gtk::Label::new(None);
+    state.set_xalign(0.0);
+    state.set_hexpand(true);
+    state.set_wrap(true);
+    let toggle = gtk::Button::new();
+    toggle.set_valign(gtk::Align::Center);
+    let update = gtk::Button::with_label("Update keyboards");
+    update.set_valign(gtk::Align::Center);
+    update.set_tooltip_text(Some("Run this again after pairing a new keyboard or pairing the same one again"));
+    r.append(&state);
+    r.append(&update);
+    r.append(&toggle);
+    b.append(&r);
+
+    let status = gtk::Label::new(None);
+    status.set_xalign(0.0);
+    status.set_wrap(true);
+    b.append(&status);
+
+    b.append(&note(
+        "Pair and connect your keyboard above first, then turn this on. At startup, press a key on the keyboard so it \
+         reconnects, then type the disk password. Rebuilding the startup image takes up to a minute.\n\
+         Trade-off: the keyboard's pairing key is copied to the unencrypted /boot partition, so someone with physical access \
+         to the disk could read it and impersonate the keyboard. A USB keyboard always works without this.",
+    ));
+
+    let show = {
+        let (state, toggle, update) = (state.clone(), toggle.clone(), update.clone());
+        Rc::new(move || {
+            if !disk_encrypted() {
+                state.set_text("Not available: this computer's disk is not encrypted.");
+                toggle.set_label("Turn on");
+                toggle.set_sensitive(false);
+                update.set_visible(false);
+                return;
+            }
+            let on = bt_unlock_enabled();
+            state.set_text(if on { "On: a paired Bluetooth keyboard can type the disk password at startup." } else { "Off" });
+            toggle.set_label(if on { "Turn off" } else { "Turn on" });
+            toggle.set_sensitive(true);
+            update.set_visible(on);
+        })
+    };
+    show();
+
+    let act = {
+        let (status, show, toggle, update) = (status.clone(), show.clone(), toggle.clone(), update.clone());
+        Rc::new(move |anchor: &gtk::Button, on: bool| {
+            status.set_text("Waiting for your password…");
+            toggle.set_sensitive(false);
+            update.set_sensitive(false);
+            let (status2, show2, update2) = (status.clone(), show.clone(), update.clone());
+            let (status, show, update) = (status.clone(), show.clone(), update.clone());
+            safora_panels::run_privileged(anchor, vec!["bt-unlock".into(), if on { "on" } else { "off" }.into()], None, move |res| {
+                match res {
+                    Ok(msg) => status.set_text(&msg),
+                    Err(e) => status.set_text(&format!("Not changed: {e}")),
+                }
+                update.set_sensitive(true);
+                show();
+            });
+            // A cancelled password dialog never calls back: re-enable the buttons once it's gone.
+            glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
+                let dialog_open = gtk::Window::list_toplevels()
+                    .iter()
+                    .filter_map(|w| w.downcast_ref::<gtk::Window>().cloned())
+                    .any(|w| w.is_visible() && w.title().as_deref() == Some("Administrator password"));
+                if dialog_open {
+                    return glib::ControlFlow::Continue;
+                }
+                if status2.text() == "Waiting for your password…" {
+                    status2.set_text("");
+                }
+                update2.set_sensitive(true);
+                show2();
+                glib::ControlFlow::Break
+            });
+        })
+    };
+    {
+        let act = act.clone();
+        toggle.connect_clicked(move |t| act(t, !bt_unlock_enabled()));
+    }
+    update.connect_clicked(move |u| act(u, true));
+    b
+}

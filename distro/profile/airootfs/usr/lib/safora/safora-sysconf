@@ -7,6 +7,7 @@
 #   safora-sysconf user-passwd NAME              (password: stdin line "SAFORA:<password>")
 #   safora-sysconf user-admin NAME on|off
 #   safora-sysconf user-del NAME
+#   safora-sysconf bt-unlock on|off              (paired Bluetooth keyboard can type the disk passphrase at startup)
 set -euo pipefail
 umask 022
 [[ $EUID -eq 0 ]] || { echo "must run as root" >&2; exit 1; }
@@ -61,5 +62,35 @@ user-del)
     name_ok "${1:-}"; regular_user "$1"
     [[ $1 != "${SUDO_USER:-}" ]] || fail "you cannot remove the account you are using"
     userdel -r "$1" ;;
+bt-unlock)
+    [[ ${1:-} == on || ${1:-} == off ]] || fail "expected on or off"
+    conf=/etc/mkinitcpio.conf.d/safora.conf
+    [[ -f $conf ]] && grep -qw encrypt "$conf" || fail "this computer's disk is not encrypted"
+    log=/var/log/safora-btunlock.log
+    if [[ $1 == on ]]; then
+        mapfile -t paired < <(timeout 5 bluetoothctl devices Paired 2>/dev/null | awk '$1=="Device"{print $2}')
+        kb=()
+        for mac in "${paired[@]}"; do
+            [[ $mac =~ ^([0-9A-F]{2}:){5}[0-9A-F]{2}$ ]] || continue
+            info=$(timeout 5 bluetoothctl info "$mac" 2>/dev/null || true)
+            [[ $info == *"Icon: input-keyboard"* ]] && kb+=("$mac")
+        done
+        (( ${#kb[@]} )) || fail "no paired Bluetooth keyboard found: pair and connect it first"
+        install -d -m 755 /etc/saforabt
+        rm -rf /etc/saforabt/state
+        install -d -m 700 /etc/saforabt/state
+        cp -a /var/lib/bluetooth/. /etc/saforabt/state/
+        ( umask 077; printf '%s\n' "${kb[@]}" > /etc/saforabt/devices )
+        /usr/lib/safora/saforabt-firmware > /etc/saforabt/firmware
+        grep -qw saforabt "$conf" || sed -i 's/\<encrypt\>/saforabt encrypt/' "$conf"
+        : > /etc/saforabt/enabled
+        mkinitcpio -P > "$log" 2>&1 || fail "rebuilding the startup image failed (see $log)"
+        echo "Enabled for ${#kb[@]} keyboard(s)."
+    else
+        sed -i 's/saforabt //' "$conf"
+        rm -rf /etc/saforabt/state /etc/saforabt/devices /etc/saforabt/firmware /etc/saforabt/enabled
+        mkinitcpio -P > "$log" 2>&1 || fail "rebuilding the startup image failed (see $log)"
+        echo "Disabled; the pairing keys were removed from /boot."
+    fi ;;
 *) fail "unknown command" ;;
 esac

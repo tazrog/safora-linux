@@ -71,7 +71,8 @@ Default shortcuts (`Mod` = Super, or Alt when nested): `Mod+Enter` terminal · `
   HTTPS-only mode, WebRTC local-IP leak protection, and uBlock Origin installed from addons.mozilla.org on first start.
 * **Plymouth** boot splash with the Safora theme, including a themed disk-passphrase prompt.
 * **Bluetooth keyboard at the unlock screen** (experimental, opt-in, untested on real hardware): pair the keyboard in the live session,
-  tick the option on the encryption page, and the installer adds a `saforabt` initramfs hook. Trade-off: the pairing key is stored in the
+  tick the option on the encryption page, and the installer adds a `saforabt` initramfs hook. On an installed system it can be switched on or off
+  (and updated after re-pairing) in *Safora Settings → Bluetooth*. The adapter's firmware is included so it also works after a cold start. Trade-off: the pairing key is stored in the
   unencrypted `/boot`. A USB keyboard always works.
 * **Secure erase before installing**: the disk page offers *Quick* (discard every block; a real secure erase where the drive supports it, otherwise an ordinary discard, which the installer says plainly) or *Full*
   (one pass of random data over the whole drive with `shred`; slow, best for hard disks). On SSDs, a full overwrite cannot reach spare flash cells, so prefer *Quick*, or the drive's own secure-erase/sanitize command, when old data must not be recoverable.

@@ -30,6 +30,7 @@ file_permissions=(
   ["/usr/bin/safora-installer"]="0:0:755"
   ["/usr/lib/safora/safora-install-backend"]="0:0:755"
   ["/usr/lib/safora/safora-sysconf"]="0:0:755"
+  ["/usr/lib/safora/saforabt-firmware"]="0:0:755"
   ["/usr/lib/initcpio/install/saforabt"]="0:0:755"
   ["/usr/lib/initcpio/hooks/saforabt"]="0:0:755"
 )

@@ -92,6 +92,8 @@ xdg-user-dirs
 alacritty
 firefox
 pcmanfm
+# gvfs: Trash, USB/drive mounting (udisks2) and network locations in the file manager
+gvfs
 btop
 unzip
 zip

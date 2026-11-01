@@ -23,6 +23,12 @@ build() {
     add_file /etc/saforabt/dbus.conf /etc/saforabt/dbus.conf
     add_file /etc/saforabt/devices /etc/saforabt/devices
 
+    # Adapter firmware (recorded by /usr/lib/safora/saforabt-firmware when the feature was switched on).
+    # Without it many adapters don't come up after a cold start, so the keyboard could never connect.
+    while IFS= read -r f; do
+        [[ $f == /usr/lib/firmware/* && -f $f ]] && add_file "$f"
+    done < <(cat /etc/saforabt/firmware 2>/dev/null; /usr/lib/safora/saforabt-firmware 2>/dev/null)
+
     local f
     while IFS= read -r -d '' f; do
         add_file "$f" "/var/lib/bluetooth/${f#/etc/saforabt/state/}"

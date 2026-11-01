@@ -242,8 +242,11 @@ GREETD
             cp -a /var/lib/bluetooth/. "$MNT/etc/saforabt/state/"
             cp -a /var/lib/bluetooth/. "$MNT/var/lib/bluetooth/"
             printf '%s\n' "${BT_MACS[@]}" > "$MNT/etc/saforabt/devices"
+            /usr/lib/safora/saforabt-firmware > "$MNT/etc/saforabt/firmware" || true
             : > "$MNT/etc/saforabt/enabled"
-            chmod -R go-rwx "$MNT/etc/saforabt" "$MNT/var/lib/bluetooth"
+            # Keys stay root-only; the folder and the "enabled" marker are readable so Settings can show the state.
+            chmod -R go-rwx "$MNT/etc/saforabt/state" "$MNT/etc/saforabt/devices" "$MNT/var/lib/bluetooth"
+            chmod 755 "$MNT/etc/saforabt"; chmod 644 "$MNT/etc/saforabt/enabled" "$MNT/etc/saforabt/firmware"
             BT_HOOK="saforabt "
             echo "Bluetooth keyboard unlock enabled for ${#BT_MACS[@]} paired device(s)"
         else
