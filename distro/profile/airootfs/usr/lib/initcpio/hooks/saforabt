@@ -1,0 +1,34 @@
+#!/usr/bin/ash
+
+run_hook() {
+    [ -f /etc/saforabt/devices ] || return 0
+
+    modprobe -a -q bluetooth btusb btintel btbcm btrtl btmtk hidp uhid hid-generic 2>/dev/null
+
+    mkdir -p /run/dbus /var/lib/bluetooth
+    dbus-daemon --config-file=/etc/saforabt/dbus.conf --fork --print-pid > /run/saforabt-dbus.pid 2>/dev/null
+    /usr/lib/bluetooth/bluetoothd -n >/run/saforabt.log 2>&1 &
+    echo $! > /run/saforabt-bluetoothd.pid
+    sleep 2
+    bluetoothctl power on >/dev/null 2>&1
+
+    # Keep trying for a while: most keyboards only reconnect after a key is pressed.
+    (
+        n=0
+        while [ $n -lt 40 ]; do
+            while read -r mac; do
+                [ -n "$mac" ] && bluetoothctl connect "$mac" >/dev/null 2>&1
+            done < /etc/saforabt/devices
+            n=$((n + 1))
+            sleep 3
+        done
+    ) &
+    echo $! > /run/saforabt-connect.pid
+}
+
+run_cleanuphook() {
+    for f in saforabt-connect saforabt-bluetoothd saforabt-dbus; do
+        [ -f /run/$f.pid ] && kill "$(cat /run/$f.pid)" 2>/dev/null
+    done
+    # The real system's bluetoothd reconnects the keyboard with the same (copied) pairing keys.
+}

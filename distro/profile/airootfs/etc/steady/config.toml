@@ -1,5 +1,0 @@
-# Steady system defaults. Per-user settings live in ~/.config/steady/config.toml (edit with steady-settings).
-[general]
-terminal = "alacritty"
-launcher = "fuzzel"
-autostart = ["steady-bar"]

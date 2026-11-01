@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="2560" height="1440" viewBox="0 0 2560 1440">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f6f2ea"/><stop offset="0.55" stop-color="#ebe4d6"/><stop offset="1" stop-color="#dcd3c2"/></linearGradient>
-    <radialGradient id="a" cx="0.75" cy="0.28" r="0.55"><stop offset="0" stop-color="#f2b84b" stop-opacity="0.38"/><stop offset="1" stop-color="#f2b84b" stop-opacity="0"/></radialGradient>
-    <radialGradient id="b" cx="0.15" cy="0.9" r="0.55"><stop offset="0" stop-color="#9bb8d3" stop-opacity="0.30"/><stop offset="1" stop-color="#9bb8d3" stop-opacity="0"/></radialGradient>
-    <linearGradient id="r1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7a5a1a" stop-opacity="0.16"/><stop offset="1" stop-color="#7a5a1a" stop-opacity="0.02"/></linearGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4f1fa"/><stop offset="0.55" stop-color="#e6e0f2"/><stop offset="1" stop-color="#d6cde8"/></linearGradient>
+    <radialGradient id="a" cx="0.75" cy="0.28" r="0.55"><stop offset="0" stop-color="#3dd6d0" stop-opacity="0.38"/><stop offset="1" stop-color="#3dd6d0" stop-opacity="0"/></radialGradient>
+    <radialGradient id="b" cx="0.15" cy="0.9" r="0.55"><stop offset="0" stop-color="#b79cff" stop-opacity="0.30"/><stop offset="1" stop-color="#b79cff" stop-opacity="0"/></radialGradient>
+    <linearGradient id="r1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4b3a7a" stop-opacity="0.16"/><stop offset="1" stop-color="#4b3a7a" stop-opacity="0.02"/></linearGradient>
     <filter id="soft"><feGaussianBlur stdDeviation="1.5"/></filter>
   </defs>
   <rect width="2560" height="1440" fill="url(#bg)"/>
@@ -14,7 +14,7 @@
     <path d="M0 1160 L520 960 L980 1130 L1500 930 L2040 1120 L2560 1000 L2560 1440 L0 1440 Z" fill="url(#r1)"/>
     <path d="M0 1300 L640 1160 L1260 1290 L1900 1150 L2560 1260 L2560 1440 L0 1440 Z" fill="url(#r1)"/>
   </g>
-  <g transform="translate(1280 640)" fill="none" stroke="#5b4a2a" opacity="0.18">
+  <g transform="translate(1280 640)" fill="none" stroke="#4b3a7a" opacity="0.18">
     <g transform="scale(330)"><path d="M0 -1 C0.55 -0.78 0.95 -0.72 1 -0.7 C1 0.05 0.7 0.65 0 1 C-0.7 0.65 -1 0.05 -1 -0.7 C-0.95 -0.72 -0.55 -0.78 0 -1 Z" stroke-width="0.006"/></g>
     <g transform="scale(420)"><path d="M0 -1 C0.55 -0.78 0.95 -0.72 1 -0.7 C1 0.05 0.7 0.65 0 1 C-0.7 0.65 -1 0.05 -1 -0.7 C-0.95 -0.72 -0.55 -0.78 0 -1 Z" stroke-width="0.004"/></g>
     <g transform="scale(520)"><path d="M0 -1 C0.55 -0.78 0.95 -0.72 1 -0.7 C1 0.05 0.7 0.65 0 1 C-0.7 0.65 -1 0.05 -1 -0.7 C-0.95 -0.72 -0.55 -0.78 0 -1 Z" stroke-width="0.003"/></g>

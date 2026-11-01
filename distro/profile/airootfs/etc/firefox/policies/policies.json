@@ -13,14 +13,27 @@
     "OfferToSaveLogins": false,
     "PasswordManagerEnabled": false,
     "HttpsOnlyMode": "enabled",
-    "Homepage": { "URL": "https://duckduckgo.com", "StartPage": "homepage" },
+    "Homepage": {
+      "URL": "https://duckduckgo.com",
+      "StartPage": "homepage"
+    },
     "SearchEngines": {
       "Default": "DuckDuckGo",
       "PreventInstalls": false,
-      "Remove": ["Google", "Bing", "Amazon.com", "eBay", "Wikipedia (en)"]
+      "Remove": [
+        "Google",
+        "Bing",
+        "Amazon.com",
+        "eBay",
+        "Wikipedia (en)"
+      ]
     },
     "SearchSuggestEnabled": false,
-    "FirefoxSuggest": { "WebSuggestions": false, "SponsoredSuggestions": false, "ImproveSuggest": false },
+    "FirefoxSuggest": {
+      "WebSuggestions": false,
+      "SponsoredSuggestions": false,
+      "ImproveSuggest": false
+    },
     "FirefoxHome": {
       "Search": true,
       "TopSites": false,
@@ -52,44 +65,207 @@
       }
     },
     "Preferences": {
-      "datareporting.policy.dataSubmissionEnabled": { "Value": false, "Status": "default" },
-      "datareporting.healthreport.uploadEnabled": { "Value": false, "Status": "default" },
-      "toolkit.telemetry.enabled": { "Value": false, "Status": "default" },
-      "toolkit.telemetry.unified": { "Value": false, "Status": "default" },
-      "toolkit.telemetry.archive.enabled": { "Value": false, "Status": "default" },
-      "toolkit.telemetry.newProfilePing.enabled": { "Value": false, "Status": "default" },
-      "toolkit.telemetry.shutdownPingSender.enabled": { "Value": false, "Status": "default" },
-      "toolkit.telemetry.updatePing.enabled": { "Value": false, "Status": "default" },
-      "toolkit.telemetry.bhrPing.enabled": { "Value": false, "Status": "default" },
-      "toolkit.telemetry.firstShutdownPing.enabled": { "Value": false, "Status": "default" },
-      "browser.ping-centre.telemetry": { "Value": false, "Status": "default" },
-      "browser.newtabpage.activity-stream.feeds.telemetry": { "Value": false, "Status": "default" },
-      "browser.newtabpage.activity-stream.telemetry": { "Value": false, "Status": "default" },
-      "browser.newtabpage.activity-stream.showSponsored": { "Value": false, "Status": "default" },
-      "browser.newtabpage.activity-stream.showSponsoredTopSites": { "Value": false, "Status": "default" },
-      "browser.discovery.enabled": { "Value": false, "Status": "default" },
-      "app.shield.optoutstudies.enabled": { "Value": false, "Status": "default" },
-      "app.normandy.enabled": { "Value": false, "Status": "default" },
-      "app.normandy.api_url": { "Value": "", "Status": "default" },
-      "browser.urlbar.suggest.quicksuggest.sponsored": { "Value": false, "Status": "default" },
-      "browser.urlbar.speculativeConnect.enabled": { "Value": false, "Status": "default" },
-      "browser.safebrowsing.downloads.remote.enabled": { "Value": false, "Status": "default" },
-      "network.captive-portal-service.enabled": { "Value": false, "Status": "default" },
-      "network.connectivity-service.enabled": { "Value": false, "Status": "default" },
-      "network.prefetch-next": { "Value": false, "Status": "default" },
-      "network.dns.disablePrefetch": { "Value": true, "Status": "default" },
-      "network.predictor.enabled": { "Value": false, "Status": "default" },
-      "beacon.enabled": { "Value": false, "Status": "default" },
-      "media.peerconnection.ice.default_address_only": { "Value": true, "Status": "default" },
-      "privacy.donottrackheader.enabled": { "Value": true, "Status": "default" },
-      "privacy.globalprivacycontrol.enabled": { "Value": true, "Status": "default" },
-      "privacy.trackingprotection.enabled": { "Value": true, "Status": "default" },
-      "privacy.trackingprotection.socialtracking.enabled": { "Value": true, "Status": "default" },
-      "browser.contentblocking.category": { "Value": "strict", "Status": "default" },
-      "extensions.pocket.enabled": { "Value": false, "Status": "default" },
-      "geo.provider.network.url": { "Value": "", "Status": "default" },
-      "browser.region.network.url": { "Value": "", "Status": "default" },
-      "browser.region.update.enabled": { "Value": false, "Status": "default" }
-    }
+      "datareporting.policy.dataSubmissionEnabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "datareporting.healthreport.uploadEnabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "toolkit.telemetry.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "toolkit.telemetry.unified": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "toolkit.telemetry.archive.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "toolkit.telemetry.newProfilePing.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "toolkit.telemetry.shutdownPingSender.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "toolkit.telemetry.updatePing.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "toolkit.telemetry.bhrPing.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "toolkit.telemetry.firstShutdownPing.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "browser.ping-centre.telemetry": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "browser.newtabpage.activity-stream.feeds.telemetry": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "browser.newtabpage.activity-stream.telemetry": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "browser.newtabpage.activity-stream.showSponsored": {
+        "Value": false,
+        "Status": "default"
+      },
+      "browser.newtabpage.activity-stream.showSponsoredTopSites": {
+        "Value": false,
+        "Status": "default"
+      },
+      "browser.discovery.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "app.shield.optoutstudies.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "app.normandy.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "app.normandy.api_url": {
+        "Value": "",
+        "Status": "default"
+      },
+      "browser.urlbar.suggest.quicksuggest.sponsored": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "browser.urlbar.speculativeConnect.enabled": {
+        "Value": false,
+        "Status": "default"
+      },
+      "browser.safebrowsing.downloads.remote.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "network.captive-portal-service.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "network.connectivity-service.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "network.prefetch-next": {
+        "Value": false,
+        "Status": "default"
+      },
+      "network.dns.disablePrefetch": {
+        "Value": true,
+        "Status": "default"
+      },
+      "network.predictor.enabled": {
+        "Value": false,
+        "Status": "default"
+      },
+      "beacon.enabled": {
+        "Value": false,
+        "Status": "default"
+      },
+      "media.peerconnection.ice.default_address_only": {
+        "Value": true,
+        "Status": "default"
+      },
+      "privacy.donottrackheader.enabled": {
+        "Value": true,
+        "Status": "default"
+      },
+      "privacy.globalprivacycontrol.enabled": {
+        "Value": true,
+        "Status": "default"
+      },
+      "privacy.trackingprotection.enabled": {
+        "Value": true,
+        "Status": "default"
+      },
+      "privacy.trackingprotection.socialtracking.enabled": {
+        "Value": true,
+        "Status": "default"
+      },
+      "browser.contentblocking.category": {
+        "Value": "strict",
+        "Status": "default"
+      },
+      "extensions.pocket.enabled": {
+        "Value": false,
+        "Status": "default"
+      },
+      "geo.provider.network.url": {
+        "Value": "",
+        "Status": "default"
+      },
+      "browser.region.network.url": {
+        "Value": "",
+        "Status": "default"
+      },
+      "browser.region.update.enabled": {
+        "Value": false,
+        "Status": "default"
+      },
+      "browser.newtabpage.activity-stream.feeds.snippets": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "browser.tabs.crashReporting.sendReport": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "browser.crashReports.unsubmittedCheck.autoSubmit2": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "extensions.getAddons.showPane": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "extensions.htmlaboutaddons.recommendations.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "toolkit.coverage.opt-out": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "toolkit.coverage.endpoint.base": {
+        "Value": "",
+        "Status": "locked"
+      },
+      "geo.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "browser.urlbar.quicksuggest.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "browser.urlbar.suggest.quicksuggest.nonsponsored": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "messaging-system.rsexperimentloader.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "dom.private-attribution.submission.enabled": {
+        "Value": false,
+        "Status": "locked"
+      }
+    },
+    "DisableCrashReporter": true
   }
 }

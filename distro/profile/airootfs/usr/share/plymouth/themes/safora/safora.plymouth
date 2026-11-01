@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Safora
+Description=Safora Linux boot splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/safora
+ScriptFile=/usr/share/plymouth/themes/safora/safora.script

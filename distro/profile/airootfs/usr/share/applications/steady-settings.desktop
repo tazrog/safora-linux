@@ -1,7 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Steady Settings
-Comment=Appearance, bar widgets and window layout
-Exec=steady-settings
-Icon=preferences-desktop
-Categories=Settings;

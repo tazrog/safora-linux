@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Build the Steady Linux live/installer ISO.
+# Build the Safora Linux live/installer ISO.
 #
 #   sudo ./distro/build-iso.sh
 #
 # Needs root because mkarchiso installs packages into a chroot and mounts /proc, /sys and /dev.
 # Everything happens inside a throw-away Arch Linux root unpacked from the official bootstrap
-# tarball, so nothing on the host system is modified (apart from /var/tmp/steady-build, which is
+# tarball, so nothing on the host system is modified (apart from /var/tmp/safora-build, which is
 # removed on success).
 set -Eeuo pipefail
 
@@ -15,17 +15,17 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 TOP=$(dirname "$HERE")
 BOOTSTRAP=${BOOTSTRAP:-$TOP/work/dl/bootstrap.tar.zst}
 BIN=$TOP/src/target/release
-WORK=${WORK:-/var/tmp/steady-build}
+WORK=${WORK:-/var/tmp/safora-build}
 OUT=$TOP/out
 OWNER=${SUDO_USER:-root}
 
-for b in steadywm steadyctl steady-bar steady-lock steady-settings steady-installer; do
+for b in saforawm saforactl safora-bar safora-lock safora-settings safora-installer; do
     [[ -x $BIN/$b ]] || { echo "Missing $BIN/$b — build the release binaries first (see README.md)." >&2; exit 1; }
 done
 [[ -f $BOOTSTRAP ]] || { echo "Missing Arch bootstrap tarball: $BOOTSTRAP" >&2; exit 1; }
 
 ROOT=$WORK/root
-CACHE=${CACHE:-/var/tmp/steady-pkg-cache}   # package downloads survive between builds
+CACHE=${CACHE:-/var/tmp/safora-pkg-cache}   # package downloads survive between builds
 # FAST=1 is for development iterations only: skips signature checks and compresses lightly.
 FAST=${FAST:-0}
 mounted=0
@@ -65,13 +65,13 @@ echo "==> Assembling the profile"
 PROFILE=$ROOT/build/profile
 mkdir -p "$PROFILE" "$ROOT/build/out"
 cp -a "$HERE/profile/." "$PROFILE/"
-install -Dm755 "$BIN/steadywm"          "$PROFILE/airootfs/usr/bin/steadywm"
-install -Dm755 "$BIN/steadyctl"         "$PROFILE/airootfs/usr/bin/steadyctl"
-install -Dm755 "$BIN/steady-lock"         "$PROFILE/airootfs/usr/bin/steady-lock"
-install -Dm755 "$BIN/steady-bar"        "$PROFILE/airootfs/usr/bin/steady-bar"
-install -Dm755 "$BIN/steady-settings"   "$PROFILE/airootfs/usr/bin/steady-settings"
-install -Dm755 "$BIN/steady-installer"  "$PROFILE/airootfs/usr/bin/steady-installer"
-install -Dm755 "$HERE/installer/steady-install-backend" "$PROFILE/airootfs/usr/lib/steady/steady-install-backend"
+install -Dm755 "$BIN/saforawm"          "$PROFILE/airootfs/usr/bin/saforawm"
+install -Dm755 "$BIN/saforactl"         "$PROFILE/airootfs/usr/bin/saforactl"
+install -Dm755 "$BIN/safora-lock"         "$PROFILE/airootfs/usr/bin/safora-lock"
+install -Dm755 "$BIN/safora-bar"        "$PROFILE/airootfs/usr/bin/safora-bar"
+install -Dm755 "$BIN/safora-settings"   "$PROFILE/airootfs/usr/bin/safora-settings"
+install -Dm755 "$BIN/safora-installer"  "$PROFILE/airootfs/usr/bin/safora-installer"
+install -Dm755 "$HERE/installer/safora-install-backend" "$PROFILE/airootfs/usr/lib/safora/safora-install-backend"
 cp "$HERE/profile/pacman.conf" "$PROFILE/pacman.conf"
 if [[ $FAST == 1 ]]; then
     echo "==> FAST mode: signature checks off, light compression (do not ship this ISO)"

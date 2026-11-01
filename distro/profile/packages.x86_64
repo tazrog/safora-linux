@@ -63,7 +63,7 @@ pulseaudio-bluetooth
 alsa-utils
 plymouth
 
-# --- graphics + Steady desktop runtime (Wayland only, no X11)
+# --- graphics + Safora desktop runtime (Wayland only, no X11)
 mesa
 vulkan-intel
 intel-media-driver

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Safora Settings
+Comment=Appearance, bar widgets and window layout
+Exec=safora-settings
+Icon=preferences-desktop
+Categories=Settings;

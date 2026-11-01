@@ -1,5 +1,5 @@
 # Optional packages from the original wish list that are too large for the live ISO.
-# Install with:  sudo pacman -S --needed - < /usr/share/steady/extras.txt
+# Install with:  sudo pacman -S --needed - < /usr/share/safora/extras.txt
 vlc
 cmus
 mame

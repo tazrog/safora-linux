@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Install Safora
+Exec=safora-installer
+Icon=system-software-install
+Categories=System;

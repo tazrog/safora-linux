@@ -1,0 +1,9 @@
+[package]
+name = "safora-panels"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+safora-common.workspace = true
+gtk4 = { version = "0.11.5", features = ["v4_14"] }

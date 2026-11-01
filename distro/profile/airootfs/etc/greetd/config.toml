@@ -2,9 +2,9 @@
 vt = 1
 
 [default_session]
-command = "tuigreet --time --greeting \"Steady Linux — Less Complexity, More Confidence\" --cmd steady-session"
+command = "tuigreet --time --greeting \"Safora Linux — Simple by Nature, Private by default\" --cmd safora-session"
 user = "greeter"
 
 [initial_session]
-command = "steady-session --live"
+command = "safora-session --live"
 user = "live"

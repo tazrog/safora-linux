@@ -1729,6 +1729,85 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
+name = "safora-bar"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "gtk4",
+ "gtk4-layer-shell",
+ "safora-common",
+ "serde",
+ "serde_json",
+ "toml 0.8.23",
+]
+
+[[package]]
+name = "safora-common"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml 0.8.23",
+]
+
+[[package]]
+name = "safora-installer"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "gtk4",
+ "safora-common",
+ "safora-panels",
+ "serde",
+ "serde_json",
+ "toml 0.8.23",
+]
+
+[[package]]
+name = "safora-lock"
+version = "0.1.0"
+dependencies = [
+ "gtk4",
+ "gtk4-layer-shell",
+ "safora-common",
+]
+
+[[package]]
+name = "safora-panels"
+version = "0.1.0"
+dependencies = [
+ "gtk4",
+ "safora-common",
+]
+
+[[package]]
+name = "safora-settings"
+version = "0.1.0"
+dependencies = [
+ "gtk4",
+ "safora-common",
+ "safora-panels",
+ "serde",
+ "serde_json",
+ "toml 0.8.23",
+]
+
+[[package]]
+name = "saforawm"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "png 0.17.16",
+ "safora-common",
+ "serde_json",
+ "smithay",
+ "smithay-drm-extras",
+ "tracing",
+ "tracing-subscriber",
+ "xcursor",
+]
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1954,85 +2033,6 @@ checksum = "eeb7109d23f319619d4cc0de5464613c8b7b1a09db2774a58101459cf6be2f10"
 dependencies = [
  "borsh",
  "serde_core",
-]
-
-[[package]]
-name = "steady-bar"
-version = "0.1.0"
-dependencies = [
- "async-channel",
- "gtk4",
- "gtk4-layer-shell",
- "serde",
- "serde_json",
- "steady-common",
- "toml 0.8.23",
-]
-
-[[package]]
-name = "steady-common"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "toml 0.8.23",
-]
-
-[[package]]
-name = "steady-installer"
-version = "0.1.0"
-dependencies = [
- "async-channel",
- "gtk4",
- "serde",
- "serde_json",
- "steady-common",
- "steady-panels",
- "toml 0.8.23",
-]
-
-[[package]]
-name = "steady-lock"
-version = "0.1.0"
-dependencies = [
- "gtk4",
- "gtk4-layer-shell",
- "steady-common",
-]
-
-[[package]]
-name = "steady-panels"
-version = "0.1.0"
-dependencies = [
- "gtk4",
- "steady-common",
-]
-
-[[package]]
-name = "steady-settings"
-version = "0.1.0"
-dependencies = [
- "gtk4",
- "serde",
- "serde_json",
- "steady-common",
- "steady-panels",
- "toml 0.8.23",
-]
-
-[[package]]
-name = "steadywm"
-version = "0.1.0"
-dependencies = [
- "image",
- "png 0.17.16",
- "serde_json",
- "smithay",
- "smithay-drm-extras",
- "steady-common",
- "tracing",
- "tracing-subscriber",
- "xcursor",
 ]
 
 [[package]]

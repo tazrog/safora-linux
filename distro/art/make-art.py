@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the Steady logo, wallpapers and boot-splash images (SVG), then render PNGs with rsvg-convert."""
+"""Generate the Safora logo, wallpapers and boot-splash images (SVG), then render PNGs with rsvg-convert."""
 import subprocess, pathlib
 
 here = pathlib.Path(__file__).parent
@@ -13,15 +13,13 @@ def shield(scale, fill="none", stroke=None, sw=2, op=1):
 
 logo = f'''<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
   <defs>
-    <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#41576b"/><stop offset="1" stop-color="#1d2a37"/></linearGradient>
-    <linearGradient id="amber" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#f7c968"/><stop offset="1" stop-color="#e9a22f"/></linearGradient>
+    <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a3a6e"/><stop offset="1" stop-color="#241a3a"/></linearGradient>
+    <linearGradient id="cy" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7ff0ea"/><stop offset="1" stop-color="#2bb8c4"/></linearGradient>
   </defs>
   <g transform="translate(256 262)">
     <g transform="scale(215)"><path d="{SHIELD}" fill="url(#g2)"/></g>
-    <g transform="scale(215)"><path transform="scale(0.8)" d="{SHIELD}" fill="none" stroke="#e6edf3" stroke-opacity="0.55" stroke-width="0.035"/></g>
-    <rect x="-96" y="-70" width="192" height="34" rx="17" fill="url(#amber)"/>
-    <rect x="-96" y="-12" width="192" height="34" rx="17" fill="#e6edf3" fill-opacity="0.9"/>
-    <rect x="-60" y="46" width="120" height="34" rx="17" fill="url(#amber)"/>
+    <g transform="scale(215)"><path transform="scale(0.8)" d="{SHIELD}" fill="none" stroke="#ece8f5" stroke-opacity="0.5" stroke-width="0.035"/></g>
+    <path d="M 62 -92 C -10 -118 -78 -86 -66 -40 C -56 4 56 -6 66 48 C 78 104 -2 122 -68 92" fill="none" stroke="url(#cy)" stroke-width="26" stroke-linecap="round"/>
   </g>
 </svg>'''
 
@@ -52,18 +50,18 @@ def wall(name, bg, glow1, glow2, line, ring, op_ring):
 def small(name, content):
     (here / name).write_text(content)
 
-dark_default = wall("default", ["#080c11", "#101822", "#18232f"], "#f2b84b", "#5b86b0", "#f7c968", "#e6edf3", 0.12)
-dark_aurora  = wall("aurora",  ["#070b12", "#0f1a2c", "#1b2a45"], "#6aa8ff", "#f2b84b", "#9cc4ff", "#9cc4ff", 0.10)
-light_dawn   = wall("dawn",    ["#f6f2ea", "#ebe4d6", "#dcd3c2"], "#f2b84b", "#9bb8d3", "#7a5a1a", "#5b4a2a", 0.18)
+dark_default = wall("default", ["#0b0814", "#17102a", "#21183a"], "#3dd6d0", "#8a63d9", "#7ff0ea", "#ece8f5", 0.12)
+dark_aurora  = wall("aurora",  ["#090714", "#130f2e", "#1d1a48"], "#8a63d9", "#3dd6d0", "#b79cff", "#b79cff", 0.10)
+light_dawn   = wall("dawn",    ["#f4f1fa", "#e6e0f2", "#d6cde8"], "#3dd6d0", "#b79cff", "#4b3a7a", "#4b3a7a", 0.18)
 
 svgs = {
     "logo.svg": logo,
-    "wallpaper-steady.svg": dark_default,
+    "wallpaper-safora.svg": dark_default,
     "wallpaper-aurora.svg": dark_aurora,
     "wallpaper-dawn.svg": light_dawn,
-    "dot.svg": '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="6" fill="#f2b84b"/></svg>',
-    "bullet.svg": '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14"><circle cx="7" cy="7" r="5" fill="#e6edf3"/></svg>',
-    "entry.svg": '<svg xmlns="http://www.w3.org/2000/svg" width="380" height="48"><rect x="1.5" y="1.5" width="377" height="45" rx="12" fill="#141b22" fill-opacity="0.92" stroke="#f2b84b" stroke-opacity="0.7" stroke-width="2"/></svg>',
+    "dot.svg": '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="6" fill="#3dd6d0"/></svg>',
+    "bullet.svg": '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14"><circle cx="7" cy="7" r="5" fill="#ece8f5"/></svg>',
+    "entry.svg": '<svg xmlns="http://www.w3.org/2000/svg" width="380" height="48"><rect x="1.5" y="1.5" width="377" height="45" rx="12" fill="#1b1528" fill-opacity="0.92" stroke="#3dd6d0" stroke-opacity="0.7" stroke-width="2"/></svg>',
 }
 for n, c in svgs.items():
     (here / n).write_text(c)
@@ -74,13 +72,13 @@ def render(svg, png, w=None, h=None):
     if h: cmd += ["-h", str(h)]
     subprocess.run(cmd, check=True)
 
-bg = prof / "backgrounds/steady"
+bg = prof / "backgrounds/safora"
 bg.mkdir(parents=True, exist_ok=True)
 for old in bg.glob("*.png"): old.unlink()
-render("wallpaper-steady.svg", bg / "steady-default.png")
-render("wallpaper-aurora.svg", bg / "steady-aurora.png")
-render("wallpaper-dawn.svg", bg / "steady-dawn.png")
-ply = prof / "plymouth/themes/steady"
+render("wallpaper-safora.svg", bg / "safora-default.png")
+render("wallpaper-aurora.svg", bg / "safora-aurora.png")
+render("wallpaper-dawn.svg", bg / "safora-dawn.png")
+ply = prof / "plymouth/themes/safora"
 render("logo.svg", ply / "logo.png", 180, 180)
 render("logo.svg", here / "logo-512.png")
 for n in ("dot", "bullet", "entry"):

@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Safora
+Comment=Safora auto-tiling Wayland desktop
+Exec=safora-session
+Type=Application
+DesktopNames=Safora

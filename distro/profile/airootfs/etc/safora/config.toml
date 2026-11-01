@@ -1,0 +1,5 @@
+# Safora system defaults. Per-user settings live in ~/.config/safora/config.toml (edit with safora-settings).
+[general]
+terminal = "alacritty"
+launcher = "fuzzel"
+autostart = ["safora-bar"]
