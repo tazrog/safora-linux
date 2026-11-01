@@ -126,6 +126,8 @@ fn handle_request(state: &mut SekuroState, req: Request, stream: &mut UnixStream
             let _ = stream.write_all(line.as_bytes());
         }
         Request::Reload => state.reload_config(),
+        Request::Lock => state.lock(),
+        Request::Unlock { token } => state.unlock(&token),
         Request::Screenshot { path } => state.screenshot_request = Some(path),
         Request::Quit => state.loop_signal.stop(),
     }

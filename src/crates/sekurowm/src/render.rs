@@ -376,6 +376,9 @@ impl SekuroState {
             out
         };
         elements.extend(layer_elements(renderer, &[Layer::Overlay]));
+        if self.locked {
+            return elements; // nothing but the lock screen (and the pointer) is drawn
+        }
         if !fullscreen_active {
             elements.extend(layer_elements(renderer, &[Layer::Top]));
         }
@@ -511,7 +514,7 @@ impl SekuroState {
     }
 
     pub fn clear_color(&self) -> Color32F {
-        if self.blanked {
+        if self.blanked || self.locked {
             return Color32F::from([0.0, 0.0, 0.0, 1.0]);
         }
         Color32F::from(parse_color(&self.config.colors.background))

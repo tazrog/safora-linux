@@ -153,6 +153,11 @@ pub struct SekuroState {
     pub last_input: Instant,
     /// The screen is dark because of the idle timer.
     pub blanked: bool,
+    /// The screen is locked: only the lock screen gets input and is drawn.
+    pub locked: bool,
+    /// Secret handed to the lock screen process; only it can unlock.
+    pub lock_token: String,
+    pub lock_spawned: Option<Instant>,
     pub input_devices: Vec<smithay::reexports::input::Device>,
     pub session: Option<LibSeatSession>,
 }
@@ -244,6 +249,9 @@ impl SekuroState {
             needs_render: true,
             last_input: Instant::now(),
             blanked: false,
+            locked: false,
+            lock_token: String::new(),
+            lock_spawned: None,
             input_devices: Vec::new(),
             session: None,
         }
@@ -842,15 +850,110 @@ impl SekuroState {
     /// Dark screen and suspend after the configured idle time. A fullscreen window (video, game) keeps the screen on.
     pub fn check_idle(&mut self) {
         let idle = self.last_input.elapsed().as_secs();
-        let p = &self.config.power;
+        let p = self.config.power.clone();
         let fullscreen = self.clients.iter().any(|c| c.fullscreen && c.workspace == self.active_ws);
         if p.screen_off_minutes > 0 && !fullscreen && !self.blanked && idle >= p.screen_off_minutes as u64 * 60 {
             self.blanked = true;
             self.needs_render = true;
         }
+        if p.lock_minutes > 0 && !fullscreen && !self.locked && idle >= p.lock_minutes as u64 * 60 {
+            self.lock();
+        }
         if p.suspend_minutes > 0 && idle >= p.suspend_minutes as u64 * 60 {
             self.last_input = Instant::now();
+            self.lock();
             self.spawn("systemctl suspend");
+        }
+        self.keep_lock_screen_alive();
+    }
+
+    // ---------------------------------------------------------------- screen lock
+
+    /// Lock the screen: hide everything, send all input to the lock screen program.
+    pub fn lock(&mut self) {
+        if self.locked {
+            return;
+        }
+        let mut bytes = [0u8; 16];
+        if std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut bytes)).is_err() {
+            tracing::error!("cannot read /dev/urandom, not locking");
+            return;
+        }
+        self.lock_token = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        self.locked = true;
+        self.layer_focus = None;
+        self.set_keyboard_focus(None);
+        // Drop pointer focus from the window under the pointer so a click can't reach it.
+        self.on_pointer_moved(smithay::backend::input::InputTime::now());
+        self.needs_render = true;
+        tracing::info!("screen locked");
+        self.spawn_lock_screen();
+    }
+
+    fn spawn_lock_screen(&mut self) {
+        self.lock_spawned = Some(Instant::now());
+        let mut cmd = Command::new("sekuro-lock");
+        cmd.env("WAYLAND_DISPLAY", &self.socket_name).env("SEKURO_LOCK_TOKEN", &self.lock_token);
+        match cmd.spawn() {
+            Ok(mut child) => {
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+            }
+            Err(e) => tracing::error!("cannot start the lock screen: {e}"),
+        }
+    }
+
+    /// Unlock if `token` is the one given to the lock screen process.
+    pub fn unlock(&mut self, token: &str) {
+        if !self.locked || token.len() != self.lock_token.len() {
+            return;
+        }
+        // Compare without early exit.
+        let diff = token.bytes().zip(self.lock_token.bytes()).fold(0u8, |a, (x, y)| a | (x ^ y));
+        if diff != 0 {
+            tracing::warn!("unlock refused: wrong token");
+            return;
+        }
+        self.locked = false;
+        self.lock_token.clear();
+        self.lock_spawned = None;
+        self.release_layer_focus();
+        self.last_input = Instant::now();
+        self.needs_render = true;
+        tracing::info!("screen unlocked");
+    }
+
+    /// The lock screen's overlay surface, if it is on screen.
+    fn lock_screen_surface(&self) -> Option<WlSurface> {
+        use smithay::desktop::layer_map_for_output;
+        for o in &self.outputs {
+            let map = layer_map_for_output(o);
+            let found = map.layers().find(|l| l.namespace() == "sekuro-lock").map(|l| l.wl_surface().clone());
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+
+    /// While locked: give the lock screen the keyboard, and restart it if it died.
+    pub fn keep_lock_screen_alive(&mut self) {
+        if !self.locked {
+            return;
+        }
+        match self.lock_screen_surface() {
+            Some(s) => {
+                if self.layer_focus.as_ref() != Some(&s) {
+                    self.layer_focus = Some(s.clone());
+                    self.set_keyboard_focus(Some(s));
+                }
+            }
+            None => {
+                if self.lock_spawned.is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(4)) {
+                    self.spawn_lock_screen();
+                }
+            }
         }
     }
 
@@ -874,6 +977,7 @@ impl SekuroState {
             Action::Close => self.close_focused(),
             Action::ToggleFloating => self.toggle_floating(),
             Action::NextOutput => self.move_to_next_output(),
+            Action::Lock => self.lock(),
             Action::ToggleFullscreen => self.toggle_fullscreen(),
             Action::CycleLayout => self.cycle_layout(),
             Action::FocusNext => self.focus_cycle(true),
@@ -986,6 +1090,9 @@ impl SekuroState {
 
         if let Some(hit) = from_layer(Layer::Overlay) {
             return Some(hit);
+        }
+        if self.locked {
+            return None;
         }
         let fullscreen_active = self.clients.iter().any(|c| c.fullscreen && c.workspace == self.active_ws);
         if !fullscreen_active {

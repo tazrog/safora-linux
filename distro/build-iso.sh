@@ -19,7 +19,7 @@ WORK=${WORK:-/var/tmp/sekuro-build}
 OUT=$TOP/out
 OWNER=${SUDO_USER:-root}
 
-for b in sekurowm sekuroctl sekuro-bar sekuro-settings sekuro-installer; do
+for b in sekurowm sekuroctl sekuro-bar sekuro-lock sekuro-settings sekuro-installer; do
     [[ -x $BIN/$b ]] || { echo "Missing $BIN/$b — build the release binaries first (see README.md)." >&2; exit 1; }
 done
 [[ -f $BOOTSTRAP ]] || { echo "Missing Arch bootstrap tarball: $BOOTSTRAP" >&2; exit 1; }
@@ -67,6 +67,7 @@ mkdir -p "$PROFILE" "$ROOT/build/out"
 cp -a "$HERE/profile/." "$PROFILE/"
 install -Dm755 "$BIN/sekurowm"          "$PROFILE/airootfs/usr/bin/sekurowm"
 install -Dm755 "$BIN/sekuroctl"         "$PROFILE/airootfs/usr/bin/sekuroctl"
+install -Dm755 "$BIN/sekuro-lock"         "$PROFILE/airootfs/usr/bin/sekuro-lock"
 install -Dm755 "$BIN/sekuro-bar"        "$PROFILE/airootfs/usr/bin/sekuro-bar"
 install -Dm755 "$BIN/sekuro-settings"   "$PROFILE/airootfs/usr/bin/sekuro-settings"
 install -Dm755 "$BIN/sekuro-installer"  "$PROFILE/airootfs/usr/bin/sekuro-installer"

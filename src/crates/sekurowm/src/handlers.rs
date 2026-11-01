@@ -287,6 +287,8 @@ impl WlrLayerShellHandler for SekuroState {
         };
         let mut map = layer_map_for_output(&output);
         let _ = map.map_layer(&DesktopLayer::new(surface, namespace));
+        drop(map);
+        self.keep_lock_screen_alive();
     }
 
     fn layer_destroyed(&mut self, surface: LayerSurface) {

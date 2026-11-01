@@ -50,6 +50,7 @@ fn report(status: &gtk::Label, res: Result<String, String>, ok_text: &str) {
 // ----------------------------------------------------------------------------------------------- power
 
 const SCREEN_OFF: &[(&str, u32)] = &[("Never", 0), ("1 minute", 1), ("2 minutes", 2), ("5 minutes", 5), ("10 minutes", 10), ("15 minutes", 15), ("30 minutes", 30)];
+const LOCK: &[(&str, u32)] = &[("Never", 0), ("1 minute", 1), ("2 minutes", 2), ("5 minutes", 5), ("10 minutes", 10), ("15 minutes", 15), ("30 minutes", 30)];
 const SUSPEND: &[(&str, u32)] = &[("Never", 0), ("5 minutes", 5), ("10 minutes", 10), ("15 minutes", 15), ("30 minutes", 30), ("1 hour", 60), ("2 hours", 120)];
 const PROFILES: &[(&str, &str)] = &[("Performance", "performance"), ("Balanced", "balanced"), ("Power saver", "power-saver")];
 
@@ -84,6 +85,17 @@ pub fn power_page(ctx: &Rc<Ctx>) -> gtk::Box {
     p.append(&row("Suspend after", &dropdown(&labels, pick(SUSPEND, cfg.power.suspend_minutes), move |i| {
         c.update(|cfg| cfg.power.suspend_minutes = SUSPEND[i].1)
     })));
+    let c = ctx.clone();
+    let labels: Vec<&str> = LOCK.iter().map(|(l, _)| *l).collect();
+    p.append(&row("Lock the screen after", &dropdown(&labels, pick(LOCK, cfg.power.lock_minutes), move |i| {
+        c.update(|cfg| cfg.power.lock_minutes = LOCK[i].1)
+    })));
+    let lock_now = gtk::Button::with_label("Lock the screen now");
+    lock_now.set_halign(gtk::Align::Start);
+    lock_now.connect_clicked(|_| {
+        let _ = sekuro_common::ipc::send(&sekuro_common::ipc::Request::Lock);
+    });
+    p.append(&lock_now);
     p.append(&note("The timers count from the last keyboard or mouse action. A full-screen window (a video, say) keeps the screen on."));
 
     p.append(&heading("Power use"));

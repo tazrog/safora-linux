@@ -35,6 +35,8 @@ pub enum Action {
     VtSwitch(i32),
     /// Send the focused window to the next monitor.
     NextOutput,
+    /// Lock the screen.
+    Lock,
 }
 
 impl Action {
@@ -48,6 +50,7 @@ impl Action {
             "close" => Action::Close,
             "float" => Action::ToggleFloating,
             "output" => Action::NextOutput,
+            "lock" => Action::Lock,
             "fullscreen" => Action::ToggleFullscreen,
             "layout" => Action::CycleLayout,
             "next" => Action::FocusNext,
@@ -111,6 +114,7 @@ pub fn default_bindings(cfg: &Config) -> Vec<Binding> {
         ("Mod+f".into(), "fullscreen".into()),
         ("Mod+Shift+space".into(), "float".into()),
         ("Mod+o".into(), "output".into()),
+        ("Mod+l".into(), "lock".into()),
         ("Mod+space".into(), "layout".into()),
         ("Mod+j".into(), "next".into()),
         ("Mod+k".into(), "prev".into()),
@@ -210,6 +214,10 @@ impl SekuroState {
                 return FilterResult::Intercept(Action::VtSwitch(vt));
             }
 
+            if state.locked {
+                return FilterResult::Forward; // only the lock screen gets keys
+            }
+
             let sym = handle.raw_latin_sym_or_raw_current_sym().unwrap_or(modified);
             let hit = state.bindings.iter().find(|b| {
                 b.sym == sym && b.logo == mods.logo && b.alt == mods.alt && b.ctrl == mods.ctrl && b.shift == mods.shift
@@ -229,7 +237,7 @@ impl SekuroState {
         }
     }
 
-    fn on_pointer_moved(&mut self, time: InputTime) {
+    pub fn on_pointer_moved(&mut self, time: InputTime) {
         let pos = self.pointer_location;
         let under = self.surface_under(pos);
 
@@ -274,6 +282,7 @@ impl SekuroState {
                         self.set_keyboard_focus(Some(surface));
                     }
                 }
+                None if self.locked => {}
                 None => {
                     // Clicking a window releases any layer surface's keyboard grab on demand.
                     if self.layer_focus.is_some() && self.layer_on_demand() {

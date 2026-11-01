@@ -25,6 +25,7 @@ file_permissions=(
   ["/usr/bin/sekurowm"]="0:0:755"
   ["/usr/bin/sekuroctl"]="0:0:755"
   ["/usr/bin/sekuro-bar"]="0:0:755"
+  ["/usr/bin/sekuro-lock"]="0:0:755"
   ["/usr/bin/sekuro-settings"]="0:0:755"
   ["/usr/bin/sekuro-installer"]="0:0:755"
   ["/usr/lib/sekuro/sekuro-install-backend"]="0:0:755"

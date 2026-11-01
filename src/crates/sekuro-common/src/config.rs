@@ -204,13 +204,15 @@ pub struct Power {
     pub screen_off_minutes: u32,
     /// Minutes without input before the machine suspends (0 = never).
     pub suspend_minutes: u32,
+    /// Minutes without input before the screen locks (0 = never).
+    pub lock_minutes: u32,
     /// "performance", "balanced" or "power-saver" (applied with powerprofilesctl when available).
     pub profile: String,
 }
 
 impl Default for Power {
     fn default() -> Self {
-        Self { screen_off_minutes: 10, suspend_minutes: 0, profile: "balanced".into() }
+        Self { screen_off_minutes: 10, suspend_minutes: 0, lock_minutes: 5, profile: "balanced".into() }
     }
 }
 
@@ -494,6 +496,7 @@ mod tests {
         let cfg: Config = toml::from_str("[power]\nsuspend_minutes = 30\n").unwrap();
         assert_eq!(cfg.power.suspend_minutes, 30);
         assert_eq!(cfg.power.screen_off_minutes, 10);
+        assert_eq!(cfg.power.lock_minutes, 5);
         assert_eq!(cfg.input.repeat_rate, 30);
         assert_eq!(cfg.accessibility.cursor_size(), 24);
     }

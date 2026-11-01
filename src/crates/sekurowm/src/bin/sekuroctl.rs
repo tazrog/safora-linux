@@ -17,6 +17,7 @@ const USAGE: &str = "usage: sekuroctl <command>
   swap-next|swap-prev   reorder the focused tile
   spawn COMMAND...      run a command inside the session
   outputs               list monitors and their display modes
+  lock                  lock the screen
   reload                re-read ~/.config/sekuro/config.toml
   screenshot FILE.png   save the screen (nested/dev mode only)
   quit                  end the session";
@@ -40,6 +41,7 @@ fn parse(args: &[String]) -> Result<Request, String> {
         Some("spawn") if args.len() > 1 => Request::Spawn { command: args[1..].join(" ") },
         Some("outputs") => Request::GetOutputs,
         Some("reload") => Request::Reload,
+        Some("lock") => Request::Lock,
         Some("screenshot") if args.len() > 1 => Request::Screenshot { path: args[1].clone() },
         Some("quit") => Request::Quit,
         _ => return Err(USAGE.into()),

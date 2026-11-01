@@ -648,11 +648,18 @@ fn power() -> gtk::Widget {
     let icon = gtk::Image::from_icon_name("system-shutdown-symbolic");
     let (pop, body) = popover_box();
     body.append(&title("Power"));
-    let entries: [(&str, &str, Box<dyn Fn()>); 4] = [
+    let entries: [(&str, &str, Box<dyn Fn()>); 5] = [
+        ("Lock screen", "system-lock-screen-symbolic", Box::new(|| {
+            let _ = ipc::send(&Request::Lock);
+        })),
         ("Log out", "system-log-out-symbolic", Box::new(|| {
             let _ = ipc::send(&Request::Quit);
         })),
-        ("Suspend", "media-playback-pause-symbolic", Box::new(|| sys::spawn("systemctl", &["suspend"]))),
+        ("Suspend", "media-playback-pause-symbolic", Box::new(|| {
+            // Lock first so the screen is already locked when the machine wakes up.
+            let _ = ipc::send(&Request::Lock);
+            sys::spawn("systemctl", &["suspend"])
+        })),
         ("Restart", "system-reboot-symbolic", Box::new(|| sys::spawn("systemctl", &["reboot"]))),
         ("Shut down", "system-shutdown-symbolic", Box::new(|| sys::spawn("systemctl", &["poweroff"]))),
     ];

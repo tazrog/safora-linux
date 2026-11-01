@@ -79,6 +79,13 @@ Default shortcuts (`Mod` = Super, or Alt when nested): `Mod+Enter` terminal · `
   This is new and has only been exercised with one screen, so treat it as experimental; *Settings → Display → Use additional monitors* turns it off.
 * **4K screens**: interface scale is 200% automatically on screens 3000+ pixels wide (or choose 100%/200% under Display).
 
+### Screen lock
+
+`Mod+L`, the power menu, `sekuroctl lock`, or the idle timer (default 5 minutes; Settings → Power) locks the screen. While locked, windows and the bar are not drawn,
+no key binding or click reaches any window, and only `sekuro-lock` receives input. Its password check uses the same setuid helper PAM uses (`unix_chkpwd`),
+with a growing delay after wrong passwords, and it can only unlock with a one-time secret the compositor gave it. If it crashes, the screen stays locked and it is restarted.
+Suspend locks first. Ctrl+Alt+F1…F6 still switches to a text console (which needs a login). Not yet done: dimming the extra monitors' bars and a lock on lid close.
+
 ### Lean by design
 
 Always running: the compositor, the bar, NetworkManager, systemd-resolved/timesyncd, UFW, AppArmor, greetd. Everything else starts on demand
@@ -114,7 +121,7 @@ with an unencrypted install, with multiple monitors, or with mouse interaction i
 
 * `/boot` is not encrypted and Secure Boot signing is not set up, so an attacker with physical access
   can tamper with the kernel/initramfs ("evil maid"). LUKS still protects your data at rest.
-* There is no screen locker yet (the Wayland `ext-session-lock` protocol is not implemented in sekurowm).
+* The screen locker is built into the compositor rather than using the `ext-session-lock` protocol, so third-party lockers (swaylock etc.) won't work. See *Screen lock* above.
 * sekurowm implements the protocols used by GTK4, Firefox and common terminals; screen capture/sharing,
   input-method, and multi-monitor layouts are not implemented (extra monitors stay dark).
 * Packages from your wish list that need X11 (`lightdm`, `picom`, `feh`, `dmenu`, `slock`, `numlockx`, `lxsession`, …) are

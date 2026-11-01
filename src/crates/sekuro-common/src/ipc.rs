@@ -34,6 +34,10 @@ pub enum Request {
     GetOutputs,
     /// Re-read `config.toml`.
     Reload,
+    /// Lock the screen.
+    Lock,
+    /// Sent by the lock screen after a correct password; `token` is the one the compositor gave it.
+    Unlock { token: String },
     /// Save a PNG of the output (nested/development backend only).
     Screenshot { path: String },
     Quit,
