@@ -93,9 +93,10 @@ case $WIPE in
         progress 3 "Overwriting $DISK with random data (this can take a long time)"
         if [[ $DRY == 1 ]]; then echo "+ shred -v -n 1 -f $DISK"
         else
-            shred -v -n 1 -f "$DISK" 2>&1 | tr '\r' '\n' | {
+            # shred redraws its progress line with carriage returns, so read up to each \r (a pipe through tr would buffer it).
+            shred -v -n 1 -f "$DISK" 2>&1 | {
                 last=-1
-                while read -r line; do
+                while IFS= read -r -d $'\r' line || [[ -n $line ]]; do
                     if [[ $line =~ ([0-9]+)% ]] && [[ ${BASH_REMATCH[1]} != "$last" ]]; then
                         last=${BASH_REMATCH[1]}
                         echo "PROGRESS 3 Overwriting $DISK with random data ($last%)"

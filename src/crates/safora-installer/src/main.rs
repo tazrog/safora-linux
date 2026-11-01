@@ -796,7 +796,7 @@ fn run_install(
                     }
                     status.set_text(msg);
                     // Repeated percentage updates ("Copying the system (4%)") stay out of the log.
-                    if !msg.starts_with("Copying the system (") {
+                    if !msg.starts_with("Copying the system (") && !msg.starts_with("Overwriting ") || msg.ends_with("long time)") {
                         text.push_str(&format!("==> {msg}\n"));
                     }
                 } else if let Some(msg) = line.strip_prefix("ERROR ") {
