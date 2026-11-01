@@ -150,6 +150,8 @@ with an unencrypted install, with multiple monitors, or with mouse interaction i
 
 ## Building
 
+The unprivileged build sandbox (a full Arch root, with thousands of symlinks) lives outside this folder, in `~/.local/share/safora/archroot` (override with `SAFORA_SANDBOX`), so the project folder can be copied or backed up anywhere. The 17 symlinks of the ISO profile are listed in `distro/symlinks.txt` and created by `build-iso.sh`.
+
 Everything below runs unprivileged except the final ISO step.
 
 ```bash

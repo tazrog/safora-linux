@@ -871,7 +871,8 @@ impl SaforaState {
 
     /// Lock the screen: hide everything, send all input to the lock screen program.
     pub fn lock(&mut self) {
-        if self.locked {
+        // The live installer session has no password, so it could never be unlocked.
+        if self.locked || std::path::Path::new("/etc/safora/live").exists() {
             return;
         }
         let mut bytes = [0u8; 16];

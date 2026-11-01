@@ -65,6 +65,13 @@ echo "==> Assembling the profile"
 PROFILE=$ROOT/build/profile
 mkdir -p "$PROFILE" "$ROOT/build/out"
 cp -a "$HERE/profile/." "$PROFILE/"
+# Symlinks are kept out of the source tree (so the folder can be copied and backed up anywhere);
+# distro/symlinks.txt lists them as "<path in airootfs> <target>" and they are created here.
+while read -r link target; do
+    [[ -n $link ]] || continue
+    mkdir -p "$PROFILE/airootfs/$(dirname "$link")"
+    ln -sfn "$target" "$PROFILE/airootfs/$link"
+done < "$HERE/symlinks.txt"
 install -Dm755 "$BIN/saforawm"          "$PROFILE/airootfs/usr/bin/saforawm"
 install -Dm755 "$BIN/saforactl"         "$PROFILE/airootfs/usr/bin/saforactl"
 install -Dm755 "$BIN/safora-lock"         "$PROFILE/airootfs/usr/bin/safora-lock"
