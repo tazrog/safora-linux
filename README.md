@@ -84,7 +84,7 @@ Default shortcuts (`Mod` = Super, or Alt when nested): `Mod+Enter` terminal · `
 `Mod+L`, the power menu, `sekuroctl lock`, or the idle timer (default 5 minutes; Settings → Power) locks the screen. While locked, windows and the bar are not drawn,
 no key binding or click reaches any window, and only `sekuro-lock` receives input. Its password check uses the same setuid helper PAM uses (`unix_chkpwd`),
 with a growing delay after wrong passwords, and it can only unlock with a one-time secret the compositor gave it. If it crashes, the screen stays locked and it is restarted.
-Suspend locks first. Ctrl+Alt+F1…F6 still switches to a text console (which needs a login). Not yet done: dimming the extra monitors' bars and a lock on lid close.
+Suspend locks first. Ctrl+Alt+F1…F6 still switches to a text console (which needs a login). Not yet done: extra monitors just go black while locked (no lock UI on them), and locking on lid close.
 
 ### Lean by design
 
