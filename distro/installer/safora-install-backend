@@ -7,7 +7,15 @@
 #
 # SAFORA_DRYRUN=1 validates the plan and prints the disk commands without running them.
 set -Eeuo pipefail
-exec 2>&1
+# Keep a copy of everything (no secrets are ever printed) so failures can be looked at afterwards;
+# it is copied to /var/log/safora-install.log on the new system.
+LOG=/tmp/safora-install.log
+if [[ ${SAFORA_DRYRUN:-0} != 1 ]]; then
+    : > "$LOG"; chmod 600 "$LOG"
+    exec > >(tee -a "$LOG") 2>&1
+else
+    exec 2>&1
+fi
 
 MNT=/mnt
 CRYPT_NAME=saforaroot
@@ -316,7 +324,12 @@ GREETD
     # Optional online extras. These need a network connection; failures are reported, never fatal.
     if [[ $CLAUDE_CODE == true ]]; then
         progress 96 "Installing Claude Code"
-        if timeout 900 arch-chroot "$MNT" sh -c 'umask 022; pacman -Syu --needed --noconfirm nodejs npm && npm install -g --no-fund --no-audit --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code'; then
+        # Anthropic's native installer: a self-contained binary in the user's ~/.local/bin, kept up to
+        # date by Claude Code itself. Needs no nodejs/npm and no system upgrade (the old npm route ran
+        # a full `pacman -Syu` inside the chroot, which failed).
+        if timeout 600 arch-chroot "$MNT" runuser -l "$USERNAME" -c \
+               'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash' \
+           && [[ -x $MNT/home/$USERNAME/.local/bin/claude ]]; then
             echo "Claude Code installed (run: claude)"
         else
             echo "note: Claude Code could not be installed (no network?). Run  safora-install-claude  later."
@@ -333,6 +346,8 @@ Icon=web-browser
 Categories=Network;Utility;
 DESKTOP
     fi
+
+    install -m600 "$LOG" "$MNT/var/log/safora-install.log" 2>/dev/null || true
 
     # Drop everything that only makes sense on the live medium.
     rm -f "$MNT/etc/sudoers.d/99-live" "$MNT/etc/safora/live" "$MNT/usr/share/applications/safora-installer.desktop"

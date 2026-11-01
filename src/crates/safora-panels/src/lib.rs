@@ -90,8 +90,13 @@ pub fn bluetooth_panel() -> gtk::Box {
     p.append(&head);
 
     let list = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    p.append(&list_frame(&list, 130));
-    let note = label("Put your device in pairing mode, press “Search for devices”, then choose Pair. Keyboards ask for a code: type it on the keyboard and press Enter.");
+    p.append(&list_frame(&list, 360));
+    // Pairing progress, errors and codes to type; the periodic refresh leaves this alone.
+    let pair_msg = label("");
+    pair_msg.set_wrap(true);
+    pair_msg.add_css_class("heading");
+    p.append(&pair_msg);
+    let note = label("Put your device in pairing mode, press “Search for devices”, then click its name (or Pair). If a code is shown above, type it on the device and press Enter.");
     note.set_wrap(true);
     note.add_css_class("dim-label");
     p.append(&note);
@@ -100,12 +105,12 @@ pub fn bluetooth_panel() -> gtk::Box {
     let updating = Rc::new(Cell::new(false));
 
     let refresh = {
-        let (list, status, power, busy, updating) = (list.clone(), status.clone(), power.clone(), busy.clone(), updating.clone());
+        let (list, status, power, busy, updating, pair_msg) = (list.clone(), status.clone(), power.clone(), busy.clone(), updating.clone(), pair_msg.clone());
         Rc::new(move || {
             if busy.get() {
                 return; // don't rebuild rows while a pairing attempt is in flight
             }
-            let (list, status, power, busy, updating) = (list.clone(), status.clone(), power.clone(), busy.clone(), updating.clone());
+            let (list, status, power, busy, updating, pair_msg) = (list.clone(), status.clone(), power.clone(), busy.clone(), updating.clone(), pair_msg.clone());
             bg(
                 || {
                     let bt = sys::read_bt();
@@ -129,7 +134,7 @@ pub fn bluetooth_panel() -> gtk::Box {
                         list.append(&label("No devices yet — press “Search for devices”."));
                     }
                     for (dev, paired) in devices {
-                        list.append(&device_row(&dev, paired, &busy));
+                        list.append(&device_row(&dev, paired, &busy, &pair_msg));
                     }
                 },
             );
@@ -165,40 +170,89 @@ pub fn bluetooth_panel() -> gtk::Box {
     p
 }
 
-fn device_row(dev: &sys::BtDevice, paired: bool, busy: &Rc<Cell<bool>>) -> gtk::Box {
+fn device_row(dev: &sys::BtDevice, paired: bool, busy: &Rc<Cell<bool>>, status: &gtk::Label) -> gtk::Box {
     let r = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let name = label(if dev.name.is_empty() { &dev.mac } else { &dev.name });
-    name.set_hexpand(true);
-    name.set_ellipsize(pango::EllipsizeMode::End);
+
+    // The name is a flat button: clicking it does the row's main action (Pair / Connect / Disconnect).
+    let name_label = label(if dev.name.is_empty() { &dev.mac } else { &dev.name });
+    name_label.set_ellipsize(pango::EllipsizeMode::End);
+    let name = gtk::Button::builder().child(&name_label).hexpand(true).has_frame(false).build();
+    name.set_tooltip_text(Some(&dev.mac));
     r.append(&name);
+
     let state = label(if dev.connected { "Connected" } else if paired { "Paired" } else { "" });
     state.add_css_class("dim-label");
     r.append(&state);
 
     let mac = dev.mac.clone();
-    if !paired {
+    let dev_mac = dev.mac.clone();
+    let main = if !paired {
         let b = gtk::Button::with_label("Pair");
-        let busy = busy.clone();
+        let (busy, status) = (busy.clone(), status.clone());
         b.connect_clicked(move |b| {
+            if busy.get() {
+                return; // one pairing at a time
+            }
             b.set_sensitive(false);
             b.set_label("Pairing…");
             busy.set(true);
-            let (mac, busy, b) = (mac.clone(), busy.clone(), b.clone());
-            bg(move || sys::bt_pair(&mac), move |ok| {
-                busy.set(false);
-                b.set_label(if ok { "Paired" } else { "Failed — retry" });
-                b.set_sensitive(!ok);
+            status.set_text("Pairing…");
+
+            // Progress messages (and a code to type on a keyboard) come from the worker thread.
+            let (tx, rx) = std::sync::mpsc::channel::<String>();
+            let msg_status = status.clone();
+            let poll = glib::timeout_add_local(Duration::from_millis(150), move || {
+                while let Ok(m) = rx.try_recv() {
+                    msg_status.set_text(&m);
+                }
+                glib::ControlFlow::Continue
             });
+            let (mac, busy, b, status) = (mac.clone(), busy.clone(), b.clone(), status.clone());
+            bg(
+                move || sys::bt_pair(&mac, &move |m| {
+                    let _ = tx.send(m);
+                }),
+                move |res| {
+                    poll.remove();
+                    busy.set(false);
+                    match res {
+                        Ok(()) => {
+                            b.set_label("Paired");
+                            status.set_text("Paired");
+                        }
+                        Err(e) => {
+                            b.set_label("Retry");
+                            b.set_sensitive(true);
+                            status.set_text(&e);
+                        }
+                    }
+                },
+            );
         });
-        r.append(&b);
+        b
     } else {
         let b = gtk::Button::with_label(if dev.connected { "Disconnect" } else { "Connect" });
         let connected = dev.connected;
         let mac2 = mac.clone();
-        b.connect_clicked(move |_| sys::bt_connect(&mac2, !connected));
-        r.append(&b);
+        b.connect_clicked(move |b| {
+            b.set_sensitive(false);
+            b.set_label(if connected { "Disconnecting…" } else { "Connecting…" });
+            sys::bt_connect(&mac2, !connected);
+        });
+        b
+    };
+    {
+        let main = main.clone();
+        name.connect_clicked(move |_| {
+            if main.is_sensitive() {
+                main.emit_clicked();
+            }
+        });
+    }
+    r.append(&main);
+    if paired {
         let f = gtk::Button::with_label("Forget");
-        f.connect_clicked(move |_| sys::bt_remove(&mac));
+        f.connect_clicked(move |_| sys::bt_remove(&dev_mac));
         r.append(&f);
     }
     r

@@ -397,21 +397,249 @@ pub fn valid_mac(s: &str) -> bool {
     p.len() == 6 && p.iter().all(|x| x.len() == 2 && x.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
-/// Pair, trust and connect (blocking, up to ~30 s). Returns true on success.
-pub fn bt_pair(mac: &str) -> bool {
+/// Remove ANSI escape sequences and carriage returns from bluetoothctl output.
+/// An escape sequence cut off at the end of `raw` is dropped, so the result for a
+/// growing buffer only ever grows (earlier offsets stay valid).
+fn strip_ansi(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut it = raw.chars().peekable();
+    while let Some(c) = it.next() {
+        match c {
+            '\x1b' => {
+                if it.peek() == Some(&'[') {
+                    it.next();
+                    // parameters/intermediates until a final byte in @..~
+                    while let Some(&n) = it.peek() {
+                        it.next();
+                        if ('@'..='~').contains(&n) {
+                            break;
+                        }
+                    }
+                } else {
+                    it.next();
+                }
+            }
+            '\r' => out.push('\n'),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// An interactive `bluetoothctl` session with its built-in pairing agent, so the
+/// passkey confirmations / PIN requests BlueZ sends during pairing get answered.
+/// (A one-shot `bluetoothctl pair` has no agent and BlueZ rejects the pairing with
+/// "No agent available".)
+struct BtSession {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    rx: std::sync::mpsc::Receiver<Vec<u8>>,
+    raw: Vec<u8>,
+    /// Offset in the stripped text up to which output has been consumed.
+    seen: usize,
+}
+
+impl BtSession {
+    fn start() -> Option<Self> {
+        use std::{io::Read, process::Stdio};
+        let mut child = Command::new("bluetoothctl")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+        let stdin = child.stdin.take()?;
+        let mut stdout = child.stdout.take()?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = stdout.read(&mut buf) {
+                if n == 0 || tx.send(buf[..n].to_vec()).is_err() {
+                    break;
+                }
+            }
+        });
+        Some(BtSession { child, stdin, rx, raw: Vec::new(), seen: 0 })
+    }
+
+    /// Output so far without escape codes (a UTF-8 character cut off at the end is left out).
+    fn text(&self) -> String {
+        let valid = match std::str::from_utf8(&self.raw) {
+            Ok(t) => t,
+            Err(e) => std::str::from_utf8(&self.raw[..e.valid_up_to()]).unwrap_or(""),
+        };
+        strip_ansi(valid)
+    }
+
+    fn send(&mut self, cmd: &str) {
+        use std::io::Write;
+        let _ = writeln!(self.stdin, "{cmd}");
+        let _ = self.stdin.flush();
+    }
+
+    /// Wait until one of `wanted` appears in new output; returns its index.
+    /// Agent prompts that show up meanwhile are answered; codes the user must type
+    /// on the device are passed to `on_msg`.
+    fn wait_for(&mut self, wanted: &[&str], secs: u64, on_msg: &dyn Fn(String)) -> Option<usize> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+        loop {
+            let text = self.text();
+            let new = &text[self.seen.min(text.len())..];
+
+            // Earliest match among the wanted strings and the agent prompts.
+            const PROMPTS: [&str; 6] = [
+                "(yes/no):",          // Confirm passkey / Authorize service / Accept pairing
+                "Enter PIN code:",    // legacy device wants a PIN from us
+                "Enter passkey",      // device displays a passkey for us to enter
+                "Passkey: ",          // we display a passkey for the user to type
+                "PIN code: ",         // we display a PIN for the user to type
+                "Request canceled",
+            ];
+            let mut best: Option<(usize, usize, bool)> = None; // (pos, idx, is_wanted)
+            for (i, w) in wanted.iter().enumerate() {
+                if let Some(p) = new.find(w) {
+                    if best.map_or(true, |b| p < b.0) {
+                        best = Some((p, i, true));
+                    }
+                }
+            }
+            for (i, w) in PROMPTS.iter().enumerate() {
+                if let Some(p) = new.find(w) {
+                    if best.map_or(true, |b| p < b.0) {
+                        best = Some((p, i, false));
+                    }
+                }
+            }
+            if let Some((p, i, is_wanted)) = best {
+                let key = if is_wanted { wanted[i] } else { PROMPTS[i] };
+                let after_start = p + key.len();
+                if is_wanted {
+                    self.seen += after_start;
+                    return Some(i);
+                }
+                // Display prompts carry the code after the key: wait for the rest of the line.
+                let rest = &new[after_start..];
+                let code: Option<String> = if i == 3 || i == 4 {
+                    match rest.find('\n') {
+                        Some(e) => Some(rest[..e].trim().to_string()),
+                        None => None, // incomplete: wait for more output
+                    }
+                } else {
+                    Some(String::new())
+                };
+                if let Some(code) = code {
+                    self.seen += after_start + if i == 3 || i == 4 { code.len() } else { 0 };
+                    match i {
+                        0 => self.send("yes"),
+                        1 => self.send("0000"),
+                        2 => {
+                            // We cannot read a code off the device; let the attempt fail cleanly.
+                            on_msg("This device shows a code to type on the computer, which isn't supported here.".into());
+                            self.send("");
+                        }
+                        3 | 4 => on_msg(format!("Type {code} on the device, then press Enter")),
+                        _ => {}
+                    }
+                    continue;
+                }
+            }
+
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return None;
+            }
+            match self.rx.recv_timeout(left.min(std::time::Duration::from_millis(200))) {
+                Ok(chunk) => self.raw.extend_from_slice(&chunk),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(_) => return None, // bluetoothctl exited
+            }
+        }
+    }
+
+    /// Wait for at least one prompt-free moment so earlier output is consumed.
+    fn drain(&mut self, ms: u64) {
+        let end = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+        while let Some(left) = end.checked_duration_since(std::time::Instant::now()) {
+            match self.rx.recv_timeout(left) {
+                Ok(chunk) => self.raw.extend_from_slice(&chunk),
+                Err(_) => break,
+            }
+        }
+        self.seen = self.text().len();
+    }
+}
+
+impl Drop for BtSession {
+    fn drop(&mut self) {
+        self.send("pairable off");
+        self.send("quit");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Pair, trust and connect (blocking, up to about a minute).
+/// `on_msg` receives progress text, including a code the user has to type on a keyboard.
+/// Returns `Err(reason)` on failure.
+pub fn bt_pair(mac: &str, on_msg: &dyn Fn(String)) -> Result<(), String> {
     if !valid_mac(mac) {
-        return false;
+        return Err("Invalid device address".into());
     }
-    let ok = Command::new("timeout")
-        .args(["30", "bluetoothctl", "pair", mac])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if ok {
-        let _ = run("bluetoothctl", &["trust", mac]);
-        let _ = Command::new("timeout").args(["15", "bluetoothctl", "connect", mac]).output();
+    let mut s = BtSession::start().ok_or("bluetoothctl could not be started")?;
+    if s.wait_for(&["Agent registered", "Agent is already registered"], 8, on_msg).is_none() {
+        return Err("Bluetooth service is not responding".into());
     }
-    ok
+    s.send("power on");
+    s.send("pairable on");
+    s.send("default-agent");
+    s.wait_for(&["Default agent request successful", "Failed to request default agent"], 5, on_msg);
+    s.drain(300);
+
+    // Discovered-but-unpaired devices expire ~30 s after a search ends; find it again if needed.
+    let dev = format!("Device {mac}");
+    s.send(&format!("info {mac}"));
+    if s.wait_for(&[dev.as_str(), "not available"], 5, on_msg) == Some(1) {
+        on_msg("Looking for the device…".into());
+        s.send("scan on");
+        let found = s.wait_for(&[dev.as_str()], 20, on_msg).is_some();
+        s.send("scan off");
+        if !found {
+            return Err("Device not found — is it in pairing mode?".into());
+        }
+    } else {
+        s.send("scan off"); // pairing while discovering is unreliable on many adapters
+    }
+    s.drain(500);
+
+    on_msg("Pairing…".into());
+    s.send(&format!("pair {mac}"));
+    match s.wait_for(&["Pairing successful", "AlreadyExists", "Failed to pair", "not available"], 45, on_msg) {
+        Some(0) | Some(1) => {}
+        Some(2) => {
+            let text = s.text();
+            let reason = text[s.seen.min(text.len())..].lines().next().unwrap_or("").trim().to_string();
+            return Err(if reason.contains("AuthenticationFailed") || reason.contains("AuthenticationRejected") {
+                "Authentication failed — wrong code or pairing rejected".into()
+            } else if reason.contains("ConnectionAttemptFailed") || reason.contains("Page Timeout") {
+                "Device didn't answer — keep it in pairing mode and close by".into()
+            } else if reason.is_empty() {
+                "Pairing failed".into()
+            } else {
+                format!("Pairing failed{reason}")
+            });
+        }
+        Some(_) => return Err("Device disappeared — put it back in pairing mode".into()),
+        None => return Err("Pairing timed out".into()),
+    }
+
+    s.send(&format!("trust {mac}"));
+    s.wait_for(&["trust succeeded", "Failed to set trusted"], 5, on_msg);
+    on_msg("Connecting…".into());
+    s.send(&format!("connect {mac}"));
+    // Paired is what matters; some devices (e.g. keyboards) connect by themselves later.
+    s.wait_for(&["Connection successful", "Failed to connect"], 15, on_msg);
+    Ok(())
 }
 
 pub fn bt_connect(mac: &str, connect: bool) {

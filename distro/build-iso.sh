@@ -65,6 +65,10 @@ echo "==> Assembling the profile"
 PROFILE=$ROOT/build/profile
 mkdir -p "$PROFILE" "$ROOT/build/out"
 cp -a "$HERE/profile/." "$PROFILE/"
+# mkarchiso keeps file modes: make sure a restrictive umask on the checkout (e.g. 077) can't produce
+# root-only system directories or files. Special cases are set by file_permissions in profiledef.sh.
+find "$PROFILE" -type d -exec chmod 755 {} +
+find "$PROFILE" -type f -exec chmod go+r,go-w {} +
 # Symlinks are kept out of the source tree (so the folder can be copied and backed up anywhere);
 # distro/symlinks.txt lists them as "<path in airootfs> <target>" and they are created here.
 while read -r link target; do

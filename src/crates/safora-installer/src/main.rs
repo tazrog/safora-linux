@@ -454,7 +454,7 @@ fn build_ui(app: &gtk::Application) {
     let claude_web = gtk::CheckButton::with_label("Add a Claude shortcut (claude.ai in Firefox) to the launcher");
     let claude_note = gtk::Label::new(Some(
         "Claude is an online service from Anthropic: what you type to it is sent over the internet, and you need your own Anthropic account. \
-         Installing Claude Code downloads it from the npm registry, so it needs a working network connection on the previous page. \
+         Installing Claude Code downloads it from Anthropic (claude.ai), so it needs a working network connection on the previous page. \
          Nothing is installed unless you tick a box, and you can install it later with the command  safora-install-claude.",
     ));
     claude_note.set_wrap(true);

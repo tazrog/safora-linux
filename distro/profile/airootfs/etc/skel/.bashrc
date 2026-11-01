@@ -1,4 +1,5 @@
 # ~/.bashrc
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac
 [[ $- != *i* ]] && return
 [ -f /usr/share/bash-completion/bash_completion ] && . /usr/share/bash-completion/bash_completion
 alias ls='ls --color=auto' ll='ls -lah --color=auto' grep='grep --color=auto'

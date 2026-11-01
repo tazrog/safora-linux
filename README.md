@@ -112,8 +112,8 @@ Safora sends nothing about you or your machine anywhere. No Safora program conta
 
 Always running: the compositor, the bar, NetworkManager, systemd-resolved/timesyncd, UFW, AppArmor, greetd. Everything else starts on demand
 (PulseAudio by socket, power-profiles-daemon by D-Bus) or only when the hardware exists (Bluetooth daemon needs an adapter, VirtualBox services need
-VirtualBox). No file indexer, no notification daemon, no polkit agent, no auto-updater, no telemetry. Node.js (for the optional Claude Code) is
-downloaded only if you tick that box. The idle timer and display-mode check run on one 2-second tick.
+VirtualBox). No file indexer, no notification daemon, no polkit agent, no auto-updater, no telemetry. The optional Claude Code is
+downloaded (Anthropic's native installer, into the user's `~/.local/bin`) only if you tick that box; with auto-updates off, update it with `claude update`. The idle timer and display-mode check run on one 2-second tick.
 
 ### Tested
 
