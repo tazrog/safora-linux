@@ -1,0 +1,86 @@
+# Steady Linux boot splash: logo, pulsing dots, and a styled disk-passphrase prompt.
+
+Window.SetBackgroundTopColor(0.04, 0.06, 0.08);
+Window.SetBackgroundBottomColor(0.10, 0.14, 0.18);
+
+screen_w = Window.GetWidth();
+screen_h = Window.GetHeight();
+
+logo_image = Image("logo.png");
+logo_sprite = Sprite(logo_image);
+logo_x = screen_w / 2 - logo_image.GetWidth() / 2;
+logo_y = screen_h * 0.36 - logo_image.GetHeight() / 2;
+logo_sprite.SetPosition(logo_x, logo_y, 10);
+
+dot_image = Image("dot.png");
+dots_y = logo_y + logo_image.GetHeight() + 36;
+for (i = 0; i < 3; i++) {
+    dot[i] = Sprite(dot_image);
+    dot[i].SetPosition(screen_w / 2 + (i - 1) * 30 - dot_image.GetWidth() / 2, dots_y, 10);
+    dot[i].SetOpacity(0.3);
+}
+
+tagline_image = Image.Text("Less Complexity, More Confidence", 0.90, 0.93, 0.95, 1);
+tagline_sprite = Sprite(tagline_image);
+tagline_sprite.SetPosition(screen_w / 2 - tagline_image.GetWidth() / 2, dots_y + 44, 10);
+tagline_sprite.SetOpacity(0.8);
+
+frame = 0;
+fun refresh_callback() {
+    frame++;
+    for (i = 0; i < 3; i++) {
+        phase = frame / 9 - i * 0.9;
+        dot[i].SetOpacity(0.25 + 0.75 * (Math.Sin(phase) + 1) / 2);
+    }
+}
+Plymouth.SetRefreshFunction(refresh_callback);
+
+# ---- passphrase prompt
+entry_image = Image("entry.png");
+bullet_image = Image("bullet.png");
+entry_sprite = Sprite(entry_image);
+entry_x = screen_w / 2 - entry_image.GetWidth() / 2;
+entry_y = screen_h * 0.70;
+entry_sprite.SetPosition(entry_x, entry_y, 20);
+entry_sprite.SetOpacity(0);
+
+prompt_sprite = Sprite();
+prompt_sprite.SetOpacity(0);
+
+for (i = 0; i < 40; i++) {
+    bullet[i] = Sprite(bullet_image);
+    bullet[i].SetOpacity(0);
+}
+
+fun password_callback(prompt_text, bullets) {
+    prompt_image = Image.Text(prompt_text, 0.90, 0.93, 0.95, 1);
+    prompt_sprite.SetImage(prompt_image);
+    prompt_sprite.SetPosition(screen_w / 2 - prompt_image.GetWidth() / 2, entry_y - prompt_image.GetHeight() - 14, 20);
+    prompt_sprite.SetOpacity(1);
+    entry_sprite.SetOpacity(1);
+    for (i = 0; i < 40; i++) {
+        if (i < bullets) {
+            bullet[i].SetPosition(entry_x + 20 + i * 22, entry_y + entry_image.GetHeight() / 2 - bullet_image.GetHeight() / 2, 30);
+            bullet[i].SetOpacity(1);
+        } else {
+            bullet[i].SetOpacity(0);
+        }
+    }
+}
+Plymouth.SetDisplayPasswordFunction(password_callback);
+
+fun normal_callback() {
+    prompt_sprite.SetOpacity(0);
+    entry_sprite.SetOpacity(0);
+    for (i = 0; i < 40; i++) bullet[i].SetOpacity(0);
+}
+Plymouth.SetDisplayNormalFunction(normal_callback);
+
+# ---- status messages (errors etc.)
+message_sprite = Sprite();
+fun message_callback(text) {
+    message_image = Image.Text(text, 0.75, 0.79, 0.96, 1);
+    message_sprite.SetImage(message_image);
+    message_sprite.SetPosition(screen_w / 2 - message_image.GetWidth() / 2, screen_h * 0.9, 20);
+}
+Plymouth.SetMessageFunction(message_callback);

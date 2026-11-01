@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Steady
+Description=Steady Linux boot splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/steady
+ScriptFile=/usr/share/plymouth/themes/steady/steady.script

@@ -1,7 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Sekuro Settings
-Comment=Appearance, bar widgets and window layout
-Exec=sekuro-settings
-Icon=preferences-desktop
-Categories=Settings;

@@ -2,10 +2,12 @@
 # Runs inside the image after packages are installed (the file is removed afterwards).
 set -e
 cat > /usr/lib/os-release <<'OSR'
-NAME="Sekuro Linux"
-PRETTY_NAME="Sekuro Linux"
-ID=sekuro
+NAME="Steady Linux"
+PRETTY_NAME="Steady Linux"
+ID=steady
 ID_LIKE=arch
 BUILD_ID=rolling
-ANSI_COLOR="38;2;79;209;165"
+HOME_URL="https://github.com/tazrog/steady-linux"
+TAGLINE="Less Complexity, More Confidence"
+ANSI_COLOR="38;2;242;184;75"
 OSR

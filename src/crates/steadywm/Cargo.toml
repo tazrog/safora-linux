@@ -1,0 +1,29 @@
+[package]
+name = "steadywm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Steady: a security-minded auto-tiling Wayland compositor"
+
+[dependencies]
+steady-common.workspace = true
+serde_json.workspace = true
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+xcursor = "0.3"
+png = "0.17"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+
+[dependencies.smithay]
+git = "https://github.com/Smithay/smithay"
+rev = "f581531d479cf2e3307bafb913c5d2bb12860bb3"
+default-features = false
+features = [
+    "desktop", "wayland_frontend",
+    "backend_winit", "backend_egl", "renderer_gl",
+    "backend_drm", "backend_gbm", "backend_libinput", "backend_udev", "backend_session_libseat",
+]
+
+[dependencies.smithay-drm-extras]
+git = "https://github.com/Smithay/smithay"
+rev = "f581531d479cf2e3307bafb913c5d2bb12860bb3"

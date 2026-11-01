@@ -1,8 +1,0 @@
-[Plymouth Theme]
-Name=Sekuro
-Description=Sekuro Linux boot splash
-ModuleName=script
-
-[script]
-ImageDir=/usr/share/plymouth/themes/sekuro
-ScriptFile=/usr/share/plymouth/themes/sekuro/sekuro.script

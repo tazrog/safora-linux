@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Steady
+Comment=Steady auto-tiling Wayland desktop
+Exec=steady-session
+Type=Application
+DesktopNames=Steady

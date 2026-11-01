@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/sekuro-common", "crates/sekurowm", "crates/sekuro-bar", "crates/sekuro-settings", "crates/sekuro-installer", "crates/sekuro-panels", "crates/sekuro-lock"]
+members = ["crates/steady-common", "crates/steadywm", "crates/steady-bar", "crates/steady-settings", "crates/steady-installer", "crates/steady-panels", "crates/steady-lock"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,8 +11,8 @@ license = "MIT"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
-sekuro-common = { path = "crates/sekuro-common" }
-sekuro-panels = { path = "crates/sekuro-panels" }
+steady-common = { path = "crates/steady-common" }
+steady-panels = { path = "crates/steady-panels" }
 
 [profile.release]
 opt-level = 3

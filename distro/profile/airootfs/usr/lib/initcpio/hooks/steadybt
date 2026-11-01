@@ -1,0 +1,34 @@
+#!/usr/bin/ash
+
+run_hook() {
+    [ -f /etc/steadybt/devices ] || return 0
+
+    modprobe -a -q bluetooth btusb btintel btbcm btrtl btmtk hidp uhid hid-generic 2>/dev/null
+
+    mkdir -p /run/dbus /var/lib/bluetooth
+    dbus-daemon --config-file=/etc/steadybt/dbus.conf --fork --print-pid > /run/steadybt-dbus.pid 2>/dev/null
+    /usr/lib/bluetooth/bluetoothd -n >/run/steadybt.log 2>&1 &
+    echo $! > /run/steadybt-bluetoothd.pid
+    sleep 2
+    bluetoothctl power on >/dev/null 2>&1
+
+    # Keep trying for a while: most keyboards only reconnect after a key is pressed.
+    (
+        n=0
+        while [ $n -lt 40 ]; do
+            while read -r mac; do
+                [ -n "$mac" ] && bluetoothctl connect "$mac" >/dev/null 2>&1
+            done < /etc/steadybt/devices
+            n=$((n + 1))
+            sleep 3
+        done
+    ) &
+    echo $! > /run/steadybt-connect.pid
+}
+
+run_cleanuphook() {
+    for f in steadybt-connect steadybt-bluetoothd steadybt-dbus; do
+        [ -f /run/$f.pid ] && kill "$(cat /run/$f.pid)" 2>/dev/null
+    done
+    # The real system's bluetoothd reconnects the keyboard with the same (copied) pairing keys.
+}

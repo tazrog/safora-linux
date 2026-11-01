@@ -1,6 +1,0 @@
-[Desktop Entry]
-Name=Sekuro
-Comment=Sekuro auto-tiling Wayland desktop
-Exec=sekuro-session
-Type=Application
-DesktopNames=Sekuro

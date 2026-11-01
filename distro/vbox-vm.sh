@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Create (or recreate) a VirtualBox VM for testing the Sekuro ISO.
-#   ./distro/vbox-vm.sh [uefi|bios] [path/to/sekuro.iso]
+# Create (or recreate) a VirtualBox VM for testing the Steady ISO.
+#   ./distro/vbox-vm.sh [uefi|bios] [path/to/steady.iso]
 set -Eeuo pipefail
 FW=${1:-uefi}
 TOP=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-ISO=${2:-$(ls -t "$TOP"/out/sekuro-*.iso 2>/dev/null | head -1)}
-NAME=Sekuro-Test-$FW
+ISO=${2:-$(ls -t "$TOP"/out/steady-*.iso 2>/dev/null | head -1)}
+NAME=Steady-Test-$FW
 DIR="$HOME/VirtualBox VMs/$NAME"
 
 [[ -f $ISO ]] || { echo "ISO not found: $ISO" >&2; exit 1; }

@@ -1,0 +1,316 @@
+#!/usr/bin/env bash
+# Steady Linux installer backend.
+#
+# Reads a JSON plan on stdin (so secrets never reach argv or the environment), then partitions,
+# encrypts, formats (ext4), copies the live system and installs the bootloader.
+# Output protocol, one message per line:  PROGRESS <percent> <text> | ERROR <text> | free text.
+#
+# STEADY_DRYRUN=1 validates the plan and prints the disk commands without running them.
+set -Eeuo pipefail
+exec 2>&1
+
+MNT=/mnt
+CRYPT_NAME=steadyroot
+DRY=${STEADY_DRYRUN:-0}
+
+progress() { echo "PROGRESS $1 $2"; }
+fail() { trap - ERR; echo "ERROR $*"; exit 1; }
+run() { echo "+ $*"; [[ $DRY == 1 ]] || "$@"; }
+trap 'echo "ERROR command failed (line $LINENO): $BASH_COMMAND"' ERR
+
+cleanup() {
+    set +e
+    [[ $DRY == 1 ]] && return
+    sync
+    mountpoint -q "$MNT" && umount -R "$MNT"
+    [[ -e /dev/mapper/$CRYPT_NAME ]] && cryptsetup close "$CRYPT_NAME"
+}
+trap cleanup EXIT
+
+[[ $EUID -eq 0 || $DRY == 1 ]] || fail "must run as root"
+
+# ---------------------------------------------------------------- read + validate
+PLAN=$(cat)
+get() { jq -er --arg k "$1" '.[$k] | if type=="boolean" then tostring else . end' <<<"$PLAN" 2>/dev/null || true; }
+
+DISK=$(get disk)
+ENCRYPT=$(get encrypt)
+PASSPHRASE=$(get passphrase)
+HOSTNAME_=$(get hostname)
+USERNAME=$(get username)
+FULLNAME=$(get fullname)
+PASSWORD=$(get password)
+TZ_=$(get timezone)
+KEYBOARD=$(get keyboard)
+UEFI=$(get uefi)
+BT_KB=$(get bt_keyboard)
+CLAUDE_CODE=$(get claude_code)
+CLAUDE_WEB=$(get claude_web)
+
+[[ $DISK =~ ^/dev/[A-Za-z0-9._-]+$ ]]        || fail "invalid disk path"
+[[ $DRY == 1 || -b $DISK ]]                   || fail "$DISK is not a block device"
+[[ $USERNAME =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]   || fail "invalid username"
+[[ $USERNAME != root && $USERNAME != live ]]  || fail "reserved username"
+[[ $HOSTNAME_ =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]] || fail "invalid hostname"
+[[ $TZ_ =~ ^[A-Za-z0-9_+/-]+$ && ( $DRY == 1 || -f /usr/share/zoneinfo/$TZ_ ) ]] || fail "invalid timezone"
+[[ $KEYBOARD =~ ^[A-Za-z0-9_-]+$ ]]           || fail "invalid keyboard layout"
+[[ $FULLNAME != *:* && $FULLNAME != *$'\n'* ]] || fail "invalid name"
+[[ -n $PASSWORD ]]                            || fail "empty user password"
+if [[ $ENCRYPT == true ]]; then
+    [[ ${#PASSPHRASE} -ge 8 ]]                || fail "encryption passphrase too short"
+fi
+
+# Refuse to touch the medium we booted from.
+if [[ $DRY != 1 ]]; then
+    boot_src=$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null || true)
+    if [[ -n $boot_src && $boot_src == "$DISK"* ]]; then fail "$DISK is the installation medium"; fi
+fi
+
+part() { if [[ $DISK =~ [0-9]$ ]]; then echo "${DISK}p$1"; else echo "${DISK}$1"; fi; }
+if [[ $UEFI == true ]]; then ESP=$(part 1); BOOT=$(part 2); ROOT=$(part 3)
+else BOOT=$(part 2); ROOT=$(part 3); fi
+
+# ------------------------------------------------------------------- partitioning
+progress 2 "Preparing $DISK"
+if [[ $DRY != 1 ]]; then
+    swapoff -a || true
+    mountpoint -q "$MNT" && umount -R "$MNT" || true
+    for p in $(lsblk -nrpo NAME "$DISK" | tac); do umount "$p" 2>/dev/null || true; done
+    [[ -e /dev/mapper/$CRYPT_NAME ]] && cryptsetup close "$CRYPT_NAME" || true
+fi
+run wipefs -af "$DISK"
+run sgdisk --zap-all "$DISK"
+
+progress 5 "Creating partitions"
+if [[ $UEFI == true ]]; then
+    run sgdisk -n1:0:+512M -t1:ef00 -c1:esp -n2:0:+1G -t2:8300 -c2:boot -n3:0:0 -t3:8300 -c3:root "$DISK"
+else
+    run sgdisk -n1:0:+1M -t1:ef02 -c1:bios -n2:0:+1G -t2:8300 -c2:boot -n3:0:0 -t3:8300 -c3:root "$DISK"
+fi
+if [[ $DRY != 1 ]]; then partprobe "$DISK" || true; udevadm settle; sleep 1; fi
+
+# ---------------------------------------------------------------------- filesystems
+progress 10 "Formatting"
+[[ $UEFI == true ]] && run mkfs.fat -F32 -n STEADYEFI "$ESP"
+run mkfs.ext4 -F -q -L steadyboot "$BOOT"
+
+ROOT_DEV=$ROOT
+if [[ $ENCRYPT == true ]]; then
+    progress 14 "Encrypting (LUKS2, argon2id) — this takes a few seconds"
+    echo "+ cryptsetup luksFormat --type luks2 ... $ROOT"
+    if [[ $DRY != 1 ]]; then
+        printf '%s' "$PASSPHRASE" | cryptsetup luksFormat --type luks2 --cipher aes-xts-plain64 --key-size 512 \
+            --hash sha512 --pbkdf argon2id --pbkdf-memory 524288 --iter-time 2000 --batch-mode --key-file=- "$ROOT"
+        printf '%s' "$PASSPHRASE" | cryptsetup open --key-file=- "$ROOT" "$CRYPT_NAME"
+    fi
+    ROOT_DEV=/dev/mapper/$CRYPT_NAME
+fi
+run mkfs.ext4 -F -q -L steadyroot "$ROOT_DEV"
+
+progress 18 "Mounting"
+run mount "$ROOT_DEV" "$MNT"
+run mkdir -p "$MNT/boot"
+run mount "$BOOT" "$MNT/boot"
+if [[ $UEFI == true ]]; then
+    run mkdir -p "$MNT/boot/efi"
+    run mount -o umask=0077 "$ESP" "$MNT/boot/efi"
+fi
+
+# ------------------------------------------------------------------------ copy system
+progress 20 "Copying the system"
+SRC=/run/archiso/airootfs
+if [[ $DRY != 1 ]]; then
+    [[ -d $SRC ]] || fail "live system image not found at $SRC"
+    # shellcheck disable=SC2016
+    rsync -aHAXx --info=progress2 --no-inc-recursive \
+        --exclude=/etc/sudoers.d/99-live --exclude=/etc/sysusers.d/live.conf --exclude=/etc/tmpfiles.d/live.conf \
+        --exclude=/etc/steady/live --exclude=/etc/greetd/config.toml --exclude=/etc/mkinitcpio.conf.d/archiso.conf \
+        --exclude=/var/cache/pacman/pkg/'*' --exclude=/var/log/'*' --exclude=/boot/initramfs-'*' \
+        "$SRC"/ "$MNT"/ 2>&1 | tr '\r' '\n' | {
+            last=-1
+            while read -r line; do
+                if [[ $line =~ ([0-9]+)% ]] && [[ ${BASH_REMATCH[1]} != "$last" ]]; then
+                    last=${BASH_REMATCH[1]}
+                    echo "PROGRESS $((20 + last * 50 / 100)) Copying the system ($last%)"
+                fi
+            done
+        }
+    [[ ${PIPESTATUS[0]} -eq 0 ]] || fail "copying the system failed"
+fi
+
+# ------------------------------------------------------------------------ configure
+progress 72 "Configuring the system"
+if [[ $DRY != 1 ]]; then
+    # mkarchiso keeps the kernel on the ISO, not inside the root image: put it on the new /boot.
+    KERNEL_SRC=$(ls /run/archiso/bootmnt/arch/boot/x86_64/vmlinuz-linux-hardened 2>/dev/null | head -1)
+    [[ -n $KERNEL_SRC ]] || fail "kernel image not found on the installation medium"
+    install -Dm644 "$KERNEL_SRC" "$MNT/boot/vmlinuz-linux-hardened"
+
+    genfstab -U "$MNT" > "$MNT/etc/fstab"
+    sed -i 's/fmask=0022,dmask=0022/umask=0077/' "$MNT/etc/fstab"
+    printf 'tmpfs\t/tmp\ttmpfs\tdefaults,nosuid,nodev,mode=1777\t0 0\n' >> "$MNT/etc/fstab"
+
+    ROOT_UUID=$(blkid -s UUID -o value "$ROOT")
+    KMAP=$(find /usr/share/kbd/keymaps -name "${KEYBOARD}.map.gz" 2>/dev/null | head -1 || true)
+    KMAP=$(basename "${KMAP:-us.map.gz}" .map.gz)
+
+    cat > "$MNT/root/steady-chroot.sh" <<CHROOT
+set -Eeuo pipefail
+ln -sf /usr/share/zoneinfo/${TZ_@Q} /etc/localtime
+hwclock --systohc || true
+sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' /etc/locale.gen
+locale-gen
+echo LANG=en_US.UTF-8 > /etc/locale.conf
+echo KEYMAP=${KMAP@Q} > /etc/vconsole.conf
+echo ${HOSTNAME_@Q} > /etc/hostname
+printf '127.0.0.1\tlocalhost\n::1\t\tlocalhost\n127.0.1.1\t%s\n' ${HOSTNAME_@Q} > /etc/hosts
+useradd -m -G wheel,audio,video,storage,lp -s /bin/bash -c ${FULLNAME@Q} ${USERNAME@Q}
+passwd -l root
+# The live medium's account must not exist on the installed system.
+if id live >/dev/null 2>&1; then userdel -rf live >/dev/null 2>&1 || true; fi
+rm -rf /home/live
+install -d -o ${USERNAME@Q} -g ${USERNAME@Q} -m 700 /home/${USERNAME@Q}/.config/steady
+printf '[general]\nkeyboard_layout = "%s"\n' ${KEYBOARD@Q} > /home/${USERNAME@Q}/.config/steady/config.toml
+chown ${USERNAME@Q}:${USERNAME@Q} /home/${USERNAME@Q}/.config/steady/config.toml
+chmod 700 /home/${USERNAME@Q}
+CHROOT
+    arch-chroot "$MNT" bash /root/steady-chroot.sh
+    rm -f "$MNT/root/steady-chroot.sh"
+    printf '%s:%s\n' "$USERNAME" "$PASSWORD" | arch-chroot "$MNT" chpasswd
+
+    # Installed-system login screen (no autologin).
+    install -d "$MNT/etc/greetd"
+    cat > "$MNT/etc/greetd/config.toml" <<'GREETD'
+[terminal]
+vt = 1
+
+[default_session]
+command = "tuigreet --time --remember --remember-session --asterisks --sessions /usr/share/wayland-sessions --cmd steady-session"
+user = "greeter"
+GREETD
+
+    # Initramfs hooks (add `encrypt` when the root is a LUKS container).
+    # Devices paired during installation keep working in the installed system.
+    if compgen -G "/var/lib/bluetooth/*" >/dev/null 2>&1; then
+        install -d -m 700 "$MNT/var/lib/bluetooth"
+        cp -a /var/lib/bluetooth/. "$MNT/var/lib/bluetooth/"
+        chmod -R go-rwx "$MNT/var/lib/bluetooth"
+    fi
+
+    # Optional: let a paired Bluetooth keyboard type the passphrase (see the steadybt hook).
+    BT_HOOK=""
+    if [[ $ENCRYPT == true && $BT_KB == true ]]; then
+        mapfile -t BT_MACS < <(timeout 5 bluetoothctl devices Paired 2>/dev/null | awk '$1=="Device"{print $2}')
+        if [[ ${#BT_MACS[@]} -gt 0 && -d /var/lib/bluetooth ]]; then
+            install -d -m 700 "$MNT/etc/steadybt/state" "$MNT/var/lib/bluetooth"
+            cp -a /var/lib/bluetooth/. "$MNT/etc/steadybt/state/"
+            cp -a /var/lib/bluetooth/. "$MNT/var/lib/bluetooth/"
+            printf '%s\n' "${BT_MACS[@]}" > "$MNT/etc/steadybt/devices"
+            : > "$MNT/etc/steadybt/enabled"
+            chmod -R go-rwx "$MNT/etc/steadybt" "$MNT/var/lib/bluetooth"
+            BT_HOOK="steadybt "
+            echo "Bluetooth keyboard unlock enabled for ${#BT_MACS[@]} paired device(s)"
+        else
+            echo "note: no paired Bluetooth devices were found; Bluetooth unlock not enabled"
+        fi
+    fi
+    if [[ $ENCRYPT == true ]]; then
+        HOOKS="base udev autodetect microcode modconf kms plymouth keyboard keymap consolefont block ${BT_HOOK}encrypt filesystems fsck"
+    else
+        HOOKS="base udev autodetect microcode modconf kms plymouth keyboard keymap consolefont block filesystems fsck"
+    fi
+    echo "HOOKS=($HOOKS)" > "$MNT/etc/mkinitcpio.conf.d/steady.conf"
+    sed -i "s/^PRESETS=.*/PRESETS=('default')/" "$MNT"/etc/mkinitcpio.d/linux-hardened.preset
+    rm -f "$MNT"/boot/initramfs-*
+
+    # Tailor the installed system to this machine: drop microcode, firmware and guest tools for hardware that isn't there.
+    VIRT=$(systemd-detect-virt 2>/dev/null || true)
+    CPU_VENDOR=$(awk -F': *' '/^vendor_id/ {print $2; exit}' /proc/cpuinfo)
+    PRUNE=()
+    case $CPU_VENDOR in
+        GenuineIntel)
+            PRUNE+=(amd-ucode)
+            # Keep the AMD GPU firmware if an AMD graphics card is present.
+            grep -qs 0x1002 /sys/class/drm/card*/device/vendor || PRUNE+=(linux-firmware-amdgpu) ;;
+        AuthenticAMD) PRUNE+=(intel-ucode) ;;
+    esac
+    [[ $VIRT == none ]] && PRUNE+=(virtualbox-guest-utils)
+    TO_REMOVE=()
+    for pkg in "${PRUNE[@]}"; do arch-chroot "$MNT" pacman -Q "$pkg" >/dev/null 2>&1 && TO_REMOVE+=("$pkg"); done
+    if (( ${#TO_REMOVE[@]} )); then
+        echo "Removing packages this machine does not need: ${TO_REMOVE[*]}"
+        arch-chroot "$MNT" pacman -Rns --noconfirm "${TO_REMOVE[@]}" || echo "note: could not remove ${TO_REMOVE[*]}"
+    fi
+
+    progress 78 "Building the initial ramdisk"
+    arch-chroot "$MNT" plymouth-set-default-theme steady || echo "note: could not select the Steady boot theme"
+    arch-chroot "$MNT" mkinitcpio -P
+
+    # Kernel command line: AppArmor + (optionally) the LUKS container.
+    CMDLINE_LINUX=""
+    # linux-hardened 7.2.x can oops in the page allocator inside VirtualBox guests (seen while
+    # cryptsetup allocates its argon2 memory). Relax page zeroing in virtual machines only.
+    if [[ $(systemd-detect-virt 2>/dev/null || true) != none ]]; then
+        CMDLINE_LINUX="init_on_alloc=0 init_on_free=0"
+    fi
+    # Intel IOMMU: blocks DMA attacks through Thunderbolt/USB4 and other external ports.
+    if [[ $VIRT == none && $CPU_VENDOR == GenuineIntel ]]; then
+        CMDLINE_LINUX="${CMDLINE_LINUX:+$CMDLINE_LINUX }intel_iommu=on"
+    fi
+    if [[ $ENCRYPT == true ]]; then
+        LUKS_UUID=$(cryptsetup luksUUID "$ROOT")
+        # no-*-workqueue: faster encrypted NVMe (skips an extra kernel queue; same security).
+        CMDLINE_LINUX="${CMDLINE_LINUX:+$CMDLINE_LINUX }cryptdevice=UUID=${LUKS_UUID}:${CRYPT_NAME}:no-read-workqueue,no-write-workqueue root=/dev/mapper/${CRYPT_NAME}"
+    fi
+    sed -i \
+        -e "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"quiet splash loglevel=3 lsm=landlock,lockdown,yama,integrity,apparmor,bpf\"|" \
+        -e "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"${CMDLINE_LINUX}\"|" \
+        -e "s|^#\?GRUB_DISABLE_OS_PROBER=.*|GRUB_DISABLE_OS_PROBER=true|" \
+        -e "s|^GRUB_TIMEOUT=.*|GRUB_TIMEOUT=3|" \
+        -e "s|^GRUB_DISTRIBUTOR=.*|GRUB_DISTRIBUTOR=\"Steady Linux\"|" \
+        "$MNT/etc/default/grub"
+    grep -q '^GRUB_DISABLE_OS_PROBER' "$MNT/etc/default/grub" || echo 'GRUB_DISABLE_OS_PROBER=true' >> "$MNT/etc/default/grub"
+
+    progress 88 "Installing the bootloader"
+    if [[ $UEFI == true ]]; then
+        # --removable puts a copy at the fallback path so firmware without NVRAM support still boots.
+        arch-chroot "$MNT" grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Steady --removable
+        arch-chroot "$MNT" grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Steady || \
+            echo "note: could not write a UEFI boot entry; the fallback path will be used"
+    else
+        arch-chroot "$MNT" grub-install --target=i386-pc "$DISK"
+    fi
+    arch-chroot "$MNT" grub-mkconfig -o /boot/grub/grub.cfg
+
+    progress 94 "Initialising the package keyring"
+    arch-chroot "$MNT" bash -c 'pacman-key --init && pacman-key --populate archlinux' || echo "note: keyring will need initialising"
+
+    # Optional online extras. These need a network connection; failures are reported, never fatal.
+    if [[ $CLAUDE_CODE == true ]]; then
+        progress 96 "Installing Claude Code"
+        if timeout 900 arch-chroot "$MNT" sh -c 'umask 022; pacman -Syu --needed --noconfirm nodejs npm && npm install -g --no-fund --no-audit --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code'; then
+            echo "Claude Code installed (run: claude)"
+        else
+            echo "note: Claude Code could not be installed (no network?). Run  steady-install-claude  later."
+        fi
+    fi
+    if [[ $CLAUDE_WEB == true ]]; then
+        cat > "$MNT/usr/share/applications/claude-web.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Claude
+Comment=Claude on the web (claude.ai) in a Firefox window
+Exec=firefox --new-window https://claude.ai
+Icon=web-browser
+Categories=Network;Utility;
+DESKTOP
+    fi
+
+    # Drop everything that only makes sense on the live medium.
+    rm -f "$MNT/etc/sudoers.d/99-live" "$MNT/etc/steady/live" "$MNT/usr/share/applications/steady-installer.desktop"
+fi
+
+progress 98 "Finishing"
+cleanup
+trap - EXIT
+progress 100 "Installation complete"

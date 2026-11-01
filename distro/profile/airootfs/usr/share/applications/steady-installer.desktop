@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Install Steady
+Exec=steady-installer
+Icon=system-software-install
+Categories=System;

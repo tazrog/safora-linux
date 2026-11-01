@@ -1,0 +1,15 @@
+# Optional packages from the original wish list that are too large for the live ISO.
+# Install with:  sudo pacman -S --needed - < /usr/share/steady/extras.txt
+vlc
+cmus
+mame
+godot
+stella
+flatpak
+cmake
+make
+flex
+bison
+python-pygame
+plymouth
+cronie

@@ -8,14 +8,14 @@ echo "PROGRESS 100 done"; sleep 30
 EOS
 chmod +x /tmp/fakebin/sudo
 cd /src/target/debug
-export PATH=/tmp/fakebin:$PWD:$PATH XDG_CONFIG_HOME=/tmp/cfg-flood LIBGL_ALWAYS_SOFTWARE=1 RUST_LOG=sekurowm=debug
+export PATH=/tmp/fakebin:$PWD:$PATH XDG_CONFIG_HOME=/tmp/cfg-flood LIBGL_ALWAYS_SOFTWARE=1 RUST_LOG=steadywm=debug
 mkdir -p $XDG_CONFIG_HOME
-SEKURO_INSTALLER_SELFTEST=1 sekurowm --winit --exec sekuro-bar --exec sekuro-installer >/src/wm-flood.log 2>&1 &
+STEADY_INSTALLER_SELFTEST=1 steadywm --winit --exec steady-bar --exec steady-installer >/src/wm-flood.log 2>&1 &
 WM=$!
 sleep ${WAIT:-16}
-echo "--- state responds?"; timeout 3 sekuroctl state | head -c 100; echo " rc=$?"
-echo "--- cpu"; ps -o pid,pcpu,stat,wchan:20,comm -C sekurowm,sekuro-installer,sekuro-bar
+echo "--- state responds?"; timeout 3 steadyctl state | head -c 100; echo " rc=$?"
+echo "--- cpu"; ps -o pid,pcpu,stat,wchan:20,comm -C steadywm,steady-installer,steady-bar
 cat /proc/$WM/task/*/stat | awk '{print $2,$3,$14,$15}' | head
-sekuroctl quit; wait $WM
+steadyctl quit; wait $WM
 tail -5 /src/wm-flood.log
-pkill -f sekuro-installer; pkill -f sekuro-bar; true
+pkill -f steady-installer; pkill -f steady-bar; true
