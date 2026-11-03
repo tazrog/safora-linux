@@ -74,6 +74,8 @@ impl CompositorHandler for SaforaState {
                 // A window that can't shrink to its tile gets floated.
                 if root == *surface && !self.clients[idx].floating && self.outgrew_tile(idx) {
                     self.relayout();
+                } else if root == *surface {
+                    self.size_dialog_to_client(idx);
                 }
             }
         }
@@ -140,6 +142,13 @@ impl XdgShellHandler for SaforaState {
         let floating = surface.parent().is_some();
         surface.with_pending_state(|s| s.decoration_mode = Some(DecoMode::ServerSide));
         self.add_toplevel(Window::new_wayland_window(surface), floating);
+    }
+
+    fn parent_changed(&mut self, surface: ToplevelSurface) {
+        // GTK gives a dialog its parent only after creating it, so dialogs are recognised here too.
+        if surface.parent().is_some() {
+            self.make_dialog(surface.wl_surface());
+        }
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
@@ -240,7 +249,16 @@ impl SaforaState {
             f
         };
 
+        // Keep popups (bar menus, context menus) a little away from the screen edges: a menu opened
+        // from the right end of the bar would otherwise sit flush against the edge.
+        const EDGE_GAP: i32 = 12;
         let mut target: Rectangle<i32, _> = out_geo;
+        if target.size.w > 4 * EDGE_GAP && target.size.h > 4 * EDGE_GAP {
+            target.loc.x += EDGE_GAP;
+            target.loc.y += EDGE_GAP;
+            target.size.w -= 2 * EDGE_GAP;
+            target.size.h -= 2 * EDGE_GAP;
+        }
         target.loc -= get_popup_toplevel_coords(&kind);
         target.loc -= root_loc;
         popup.with_pending_state(|state| {

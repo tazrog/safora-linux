@@ -1,26 +1,37 @@
 #!/usr/bin/ash
+# Starts a minimal Bluetooth stack so a paired keyboard can type the disk passphrase.
+# A log is kept in /run/saforabt.log, which stays readable on the booted system.
 
 run_hook() {
     [ -f /etc/saforabt/devices ] || return 0
+    log=/run/saforabt.log
+    echo "saforabt: starting" > $log
 
-    modprobe -a -q bluetooth btusb btintel btbcm btrtl btmtk hidp uhid hid-generic 2>/dev/null
+    modprobe -a -q cmac ccm ecdh_generic bluetooth btusb btintel btbcm btrtl btmtk hidp uhid hid-generic 2>>$log
+
+    # Wait for the adapter (firmware loading can take a few seconds after a cold start).
+    n=0
+    while [ ! -e /sys/class/bluetooth/hci0 ] && [ $n -lt 20 ]; do sleep 0.5; n=$((n + 1)); done
+    ls /sys/class/bluetooth >>$log 2>&1
 
     mkdir -p /run/dbus /var/lib/bluetooth
-    dbus-daemon --config-file=/etc/saforabt/dbus.conf --fork --print-pid > /run/saforabt-dbus.pid 2>/dev/null
-    /usr/lib/bluetooth/bluetoothd -n >/run/saforabt.log 2>&1 &
+    dbus-daemon --config-file=/etc/saforabt/dbus.conf --fork --print-pid > /run/saforabt-dbus.pid 2>>$log
+    /usr/lib/bluetooth/bluetoothd -n >>$log 2>&1 &
     echo $! > /run/saforabt-bluetoothd.pid
-    sleep 2
-    bluetoothctl power on >/dev/null 2>&1
 
-    # Keep trying for a while: most keyboards only reconnect after a key is pressed.
+    # Power on, then keep trying to connect for 5 minutes: most keyboards only reconnect
+    # after a key is pressed. A keyboard that drops the link (e.g. goes to sleep) is reconnected.
     (
         n=0
-        while [ $n -lt 40 ]; do
+        while [ $n -lt 150 ]; do
+            bluetoothctl power on >/dev/null 2>&1
             while read -r mac; do
-                [ -n "$mac" ] && bluetoothctl connect "$mac" >/dev/null 2>&1
+                [ -n "$mac" ] || continue
+                if bluetoothctl info "$mac" 2>/dev/null | grep -q "Connected: yes"; then continue; fi
+                bluetoothctl connect "$mac" >>$log 2>&1
             done < /etc/saforabt/devices
             n=$((n + 1))
-            sleep 3
+            sleep 2
         done
     ) &
     echo $! > /run/saforabt-connect.pid
@@ -30,5 +41,6 @@ run_cleanuphook() {
     for f in saforabt-connect saforabt-bluetoothd saforabt-dbus; do
         [ -f /run/$f.pid ] && kill "$(cat /run/$f.pid)" 2>/dev/null
     done
+    dmesg 2>/dev/null | grep -iE 'bluetooth|hci|hid|input:' >> /run/saforabt.log
     # The real system's bluetoothd reconnects the keyboard with the same (copied) pairing keys.
 }

@@ -4,22 +4,33 @@ use std::{cell::{Cell, RefCell}, rc::Rc, time::Duration};
 
 use gtk4 as gtk;
 use gtk::{gio, glib, pango, prelude::*};
-use safora_common::ipc::{self, Request, State};
+use safora_common::{
+    config::{widget_kind, WidgetOpts},
+    ipc::{self, Request, State},
+};
 
-use crate::{sys, Ctx};
+use crate::{extra, sys, Ctx};
 
 pub fn build(name: &str, ctx: &Rc<Ctx>) -> Option<gtk::Widget> {
-    Some(match name {
+    let o = ctx.config.bar.opts(name);
+    Some(match widget_kind(name) {
         "workspaces" => workspaces(ctx),
         "apps" => apps(ctx),
-        "clock" => clock(ctx.config.bar.clock_24h),
-        "cpu" => cpu(),
-        "ram" => ram(),
-        "disk" => disk(),
-        "network" => network(),
-        "bluetooth" => bluetooth(),
-        "audio" => audio(),
+        "clock" => clock(ctx.config.bar.clock_24h, &o),
+        "cpu" => cpu(ctx, &o),
+        "ram" => ram(ctx, &o),
+        "disk" => disk(ctx, &o),
+        "network" => network(&o),
+        "bluetooth" => bluetooth(&o),
+        "audio" => audio(&o),
         "power" => power(),
+        "netspeed" => extra::netspeed(ctx, &o),
+        "temperature" => extra::temperature(ctx, &o),
+        "battery" => extra::battery(&o),
+        "weather" => extra::weather(&o),
+        "tray" => extra::tray(&o),
+        "spacer" => extra::spacer(&o),
+        "separator" => extra::separator(),
         other => {
             eprintln!("safora-bar: unknown widget `{other}`");
             return None;
@@ -31,7 +42,7 @@ pub fn build(name: &str, ctx: &Rc<Ctx>) -> Option<gtk::Widget> {
 
 /// Run `work` on a worker thread every `ms` milliseconds and hand the result to `apply` on the UI
 /// thread. Stops automatically once `anchor` has been destroyed (e.g. after a bar rebuild).
-fn poll<W, T>(anchor: &W, ms: u64, work: impl Fn() -> T + Clone + Send + 'static, apply: impl Fn(T) + 'static)
+pub(crate) fn poll<W, T>(anchor: &W, ms: u64, work: impl Fn() -> T + Clone + Send + 'static, apply: impl Fn(T) + 'static)
 where
     W: IsA<gtk::Widget>,
     T: Send + 'static,
@@ -59,7 +70,7 @@ where
 }
 
 /// Run `work` once in the background.
-fn once<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, apply: impl FnOnce(T) + 'static) {
+pub(crate) fn once<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, apply: impl FnOnce(T) + 'static) {
     glib::spawn_future_local(async move {
         if let Ok(v) = gio::spawn_blocking(work).await {
             apply(v);
@@ -67,13 +78,13 @@ fn once<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, apply: imp
     });
 }
 
-fn label(text: &str) -> gtk::Label {
+pub(crate) fn label(text: &str) -> gtk::Label {
     let l = gtk::Label::new(Some(text));
     l.set_xalign(0.0);
     l
 }
 
-fn set_level(w: &impl IsA<gtk::Widget>, level: &str) {
+pub(crate) fn set_level(w: &impl IsA<gtk::Widget>, level: &str) {
     for c in ["warn", "crit"] {
         w.remove_css_class(c);
     }
@@ -82,7 +93,7 @@ fn set_level(w: &impl IsA<gtk::Widget>, level: &str) {
     }
 }
 
-fn icon_label(icon: &str) -> (gtk::Box, gtk::Image, gtk::Label) {
+pub(crate) fn icon_label(icon: &str) -> (gtk::Box, gtk::Image, gtk::Label) {
     let b = gtk::Box::new(gtk::Orientation::Horizontal, 5);
     let i = gtk::Image::from_icon_name(icon);
     let l = gtk::Label::new(None);
@@ -91,7 +102,7 @@ fn icon_label(icon: &str) -> (gtk::Box, gtk::Image, gtk::Label) {
     (b, i, l)
 }
 
-fn menu_button(child: &impl IsA<gtk::Widget>, popover: &gtk::Popover) -> gtk::MenuButton {
+pub(crate) fn menu_button(child: &impl IsA<gtk::Widget>, popover: &gtk::Popover) -> gtk::MenuButton {
     let b = gtk::MenuButton::new();
     b.set_child(Some(child));
     b.set_popover(Some(popover));
@@ -100,24 +111,24 @@ fn menu_button(child: &impl IsA<gtk::Widget>, popover: &gtk::Popover) -> gtk::Me
     b
 }
 
-fn popover_box() -> (gtk::Popover, gtk::Box) {
+pub(crate) fn popover_box() -> (gtk::Popover, gtk::Box) {
     let pop = gtk::Popover::new();
     let b = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    b.set_margin_top(2);
-    b.set_margin_bottom(2);
-    b.set_margin_start(2);
-    b.set_margin_end(2);
+    b.set_margin_top(4);
+    b.set_margin_bottom(4);
+    b.set_margin_start(6);
+    b.set_margin_end(6);
     pop.set_child(Some(&b));
     (pop, b)
 }
 
-fn title(text: &str) -> gtk::Label {
+pub(crate) fn title(text: &str) -> gtk::Label {
     let l = label(text);
     l.add_css_class("title");
     l
 }
 
-fn clear(b: &impl IsA<gtk::Widget>) {
+pub(crate) fn clear(b: &impl IsA<gtk::Widget>) {
     while let Some(c) = b.first_child() {
         c.unparent();
     }
@@ -185,20 +196,88 @@ fn app_icon(app_id: &str) -> gtk::Image {
     }
 }
 
+/// Title length for each window button: shorter as more windows are open, icons only when crowded.
+fn app_title_chars(windows: usize) -> Option<i32> {
+    match windows {
+        0..=4 => Some(18),
+        5..=6 => Some(12),
+        7..=9 => Some(7),
+        _ => None,
+    }
+}
+
+/// Limit the window strip to the room between its left edge and the (centred) clock.
+fn fit_apps(scroller: &gtk::ScrolledWindow) {
+    let Some(root) = scroller.ancestor(gtk::CenterBox::static_type()).and_downcast::<gtk::CenterBox>() else { return };
+    let width = root.width();
+    if width <= 0 {
+        return;
+    }
+    let center = root.center_widget().map(|c| c.measure(gtk::Orientation::Horizontal, -1).1).unwrap_or(0);
+    let x = scroller
+        .compute_point(&root, &gtk::graphene::Point::new(0.0, 0.0))
+        .map(|p| p.x() as i32)
+        .unwrap_or(0);
+    let room = (width / 2 - center / 2 - x - 16).max(40);
+    if scroller.max_content_width() != room {
+        scroller.set_max_content_width(room);
+    }
+}
+
 fn apps(ctx: &Rc<Ctx>) -> gtk::Widget {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    // The window list only gets the room left over beside the clock and the other modules, and
+    // scrolls (mouse wheel) when that is not enough, so it can never run into its neighbours.
+    let scroller = gtk::ScrolledWindow::builder()
+        .child(&row)
+        .hscrollbar_policy(gtk::PolicyType::External)
+        .vscrollbar_policy(gtk::PolicyType::Never)
+        .propagate_natural_width(true)
+        .min_content_width(40)
+        .hexpand(false)
+        .build();
+    scroller.add_css_class("apps-scroller");
+    // An ordinary (vertical) mouse wheel scrolls the strip sideways.
+    let wheel = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
+    wheel.connect_scroll({
+        let adj = scroller.hadjustment();
+        move |_, dx, dy| {
+            let step = if dx != 0.0 { dx } else { dy } * 60.0;
+            let max = (adj.upper() - adj.page_size()).max(0.0);
+            adj.set_value((adj.value() + step).clamp(0.0, max));
+            glib::Propagation::Stop
+        }
+    });
+    scroller.add_controller(wheel);
+    // Keep the strip within the space left of the clock so the clock stays centred (re-checked
+    // twice a second: the bar width changes with the monitor and the bar settings).
+    glib::timeout_add_local(std::time::Duration::from_millis(500), {
+        let weak = scroller.downgrade();
+        move || match weak.upgrade() {
+            Some(sc) => {
+                fit_apps(&sc);
+                glib::ControlFlow::Continue
+            }
+            None => glib::ControlFlow::Break,
+        }
+    });
     let row2 = row.clone();
+    let sc2 = scroller.clone();
     ctx.listeners.borrow_mut().push(Box::new(move |s: &State| {
         clear(&row2);
+        fit_apps(&sc2);
+        let chars = app_title_chars(s.windows.len());
         for w in &s.windows {
             let b = gtk::Button::new();
             let inner = gtk::Box::new(gtk::Orientation::Horizontal, 6);
             inner.append(&app_icon(&w.app_id));
             let text = if w.title.is_empty() { &w.app_id } else { &w.title };
-            let l = gtk::Label::new(Some(text));
-            l.set_ellipsize(pango::EllipsizeMode::End);
-            l.set_max_width_chars(18);
-            inner.append(&l);
+            if let Some(chars) = chars {
+                let l = gtk::Label::new(Some(text));
+                l.set_ellipsize(pango::EllipsizeMode::End);
+                l.set_max_width_chars(chars);
+                inner.append(&l);
+            }
             b.set_child(Some(&inner));
             b.add_css_class("app");
             if w.focused {
@@ -222,27 +301,31 @@ fn apps(ctx: &Rc<Ctx>) -> gtk::Widget {
             row2.append(&b);
         }
     }));
-    row.upcast()
+    scroller.upcast()
 }
 
 // ---------------------------------------------------------------------- clock
 
-fn clock(h24: bool) -> gtk::Widget {
+fn clock(h24: bool, o: &WidgetOpts) -> gtk::Widget {
+    let pattern = safora_common::config::clock_pattern(&o.format, h24);
+    // Only patterns that show seconds need a tick every second.
+    let secs = if ["%S", "%s", "%T", "%r", "%X", "%c"].iter().any(|p| pattern.contains(p)) { 1 } else { 5 };
     let l = gtk::Label::new(None);
     let update = {
         let l = l.clone();
         move || {
             if let Ok(now) = glib::DateTime::now_local() {
-                if let Ok(s) = now.format(if h24 { "%a %d %b   %H:%M" } else { "%a %d %b   %I:%M %p" }) {
-                    l.set_text(&s);
+                if let Ok(s) = now.format(&pattern) {
+                    if l.text() != s {
+                        l.set_text(&s);
+                    }
                 }
             }
         }
     };
     update();
     let weak = l.downgrade();
-    // The label only shows minutes, so wake up twice a minute instead of every second.
-    glib::timeout_add_seconds_local(30, move || {
+    glib::timeout_add_seconds_local(secs, move || {
         if weak.upgrade().is_none() {
             return glib::ControlFlow::Break;
         }
@@ -257,59 +340,59 @@ fn clock(h24: bool) -> gtk::Widget {
 
 // ------------------------------------------------------------ cpu / ram / disk
 
-fn cpu() -> gtk::Widget {
-    let l = gtk::Label::new(Some("CPU –"));
-    l.add_css_class("metric");
-    let prev = Rc::new(Cell::new(None::<(u64, u64)>));
-    let l2 = l.clone();
-    poll(&l, 2000, sys::read_cpu, move |now| {
-        let Some(now) = now else { return };
-        if let Some(p) = prev.get() {
-            let pct = sys::cpu_percent(p, now);
-            l2.set_text(&format!("CPU {pct:.0}%"));
-            set_level(&l2, if pct > 95.0 { "crit" } else if pct > 80.0 { "warn" } else { "" });
-        }
-        prev.set(Some(now));
-    });
-    l.upcast()
+fn level(pct: f64, warn: f64, crit: f64) -> &'static str {
+    if pct > crit { "crit" } else if pct > warn { "warn" } else { "" }
 }
 
-fn ram() -> gtk::Widget {
-    let l = gtk::Label::new(Some("RAM –"));
-    l.add_css_class("metric");
-    let l2 = l.clone();
-    poll(&l, 3000, sys::read_mem, move |m| {
-        let Some((total, avail)) = m else { return };
+fn cpu(ctx: &Rc<Ctx>, o: &WidgetOpts) -> gtk::Widget {
+    let prev = Cell::new(None::<(u64, u64)>);
+    extra::metric(ctx, o, "CPU", "cpu-symbolic", 2, sys::read_cpu, move |now| {
+        let now = now?;
+        let p = prev.replace(Some(now))?;
+        let pct = sys::cpu_percent(p, now);
+        Some(extra::Reading { frac: pct / 100.0, value: format!("{pct:.0}%"), tooltip: format!("Processor {pct:.0}% busy"), level: level(pct, 80.0, 95.0) })
+    })
+}
+
+fn ram(ctx: &Rc<Ctx>, o: &WidgetOpts) -> gtk::Widget {
+    let format = o.format.clone();
+    extra::metric(ctx, o, "RAM", "memory-symbolic", 3, sys::read_mem, move |m| {
+        let (total, avail) = m?;
         let used = total.saturating_sub(avail);
         let pct = used as f64 * 100.0 / total.max(1) as f64;
-        l2.set_text(&format!("RAM {}", sys::human_bytes(used * 1024)));
-        l2.set_tooltip_text(Some(&format!(
-            "{} used of {} ({pct:.0}%)",
-            sys::human_bytes(used * 1024),
-            sys::human_bytes(total * 1024)
-        )));
-        set_level(&l2, if pct > 95.0 { "crit" } else if pct > 85.0 { "warn" } else { "" });
-    });
-    l.upcast()
+        let (u, t, f) = (sys::human_bytes(used * 1024), sys::human_bytes(total * 1024), sys::human_bytes(avail * 1024));
+        let value = match format.as_str() {
+            "percent" => format!("{pct:.0}%"),
+            "used-total" => format!("{u} / {t}"),
+            "free" => format!("{f} free"),
+            _ => u.clone(),
+        };
+        Some(extra::Reading { frac: pct / 100.0, value, tooltip: format!("{u} used of {t} ({pct:.0}%)"), level: level(pct, 85.0, 95.0) })
+    })
 }
 
-fn disk() -> gtk::Widget {
-    let l = gtk::Label::new(Some("DISK –"));
-    l.add_css_class("metric");
-    let l2 = l.clone();
-    poll(&l, 30_000, || sys::read_disk("/"), move |d| {
-        let Some((used, total)) = d else { return };
+fn disk(ctx: &Rc<Ctx>, o: &WidgetOpts) -> gtk::Widget {
+    let format = o.format.clone();
+    let path = if o.source.is_empty() { "/".to_string() } else { o.source.clone() };
+    let p2 = path.clone();
+    extra::metric(ctx, o, "DISK", "drive-harddisk-symbolic", 30, move || sys::read_disk(&p2), move |d| {
+        let (used, total) = d?;
         let pct = used as f64 * 100.0 / total.max(1) as f64;
-        l2.set_text(&format!("DISK {pct:.0}%"));
-        l2.set_tooltip_text(Some(&format!("{} used of {}", sys::human_bytes(used), sys::human_bytes(total))));
-        set_level(&l2, if pct > 95.0 { "crit" } else if pct > 85.0 { "warn" } else { "" });
-    });
-    l.upcast()
+        let (u, t, f) = (sys::human_bytes(used), sys::human_bytes(total), sys::human_bytes(total.saturating_sub(used)));
+        let value = match format.as_str() {
+            "used" => u.clone(),
+            "free" => format!("{f} free"),
+            "used-total" => format!("{u} / {t}"),
+            _ => format!("{pct:.0}%"),
+        };
+        Some(extra::Reading { frac: pct / 100.0, value, tooltip: format!("{path}: {u} used of {t}, {f} free"), level: level(pct, 85.0, 95.0) })
+    })
 }
 
 // -------------------------------------------------------------------- network
 
-fn network() -> gtk::Widget {
+fn network(o: &WidgetOpts) -> gtk::Widget {
+    let icon_only = o.format == "icon";
     let (content, icon, text) = icon_label("network-offline-symbolic");
     let (pop, body) = popover_box();
     body.set_width_request(260);
@@ -370,19 +453,19 @@ fn network() -> gtk::Widget {
         }
     });
 
-    let refresh = {
+    let refresh = Rc::new({
         let (list, switch, updating, selected, pw_row, pop) =
             (list.clone(), switch.clone(), updating.clone(), selected.clone(), pw_row.clone(), pop.clone());
-        move || {
+        move |rescan: bool| {
             let (list, switch, updating, selected, pw_row, pop) =
                 (list.clone(), switch.clone(), updating.clone(), selected.clone(), pw_row.clone(), pop.clone());
             once(
-                || (sys::wifi_enabled(), sys::read_wifi(true), sys::saved_connections()),
+                move || (sys::wifi_enabled(), sys::read_wifi(rescan), sys::saved_connections()),
                 move |(enabled, aps, saved)| {
                     updating.set(true);
                     switch.set_active(enabled);
                     updating.set(false);
-                    clear(&list);
+                    list.remove_all();
                     if !enabled {
                         list.append(&label("Wi-Fi is turned off"));
                     } else if aps.is_empty() {
@@ -422,10 +505,14 @@ fn network() -> gtk::Widget {
                 },
             );
         }
-    };
+    });
     pop.connect_show({
         let refresh = refresh.clone();
-        move |_| refresh()
+        // The last known networks appear at once; a fresh scan (a few seconds) then updates the list.
+        move |_| {
+            refresh(false);
+            refresh(true);
+        }
     });
 
     poll(&content, 5000, sys::read_net, move |net| {
@@ -439,6 +526,7 @@ fn network() -> gtk::Widget {
         text.set_ellipsize(pango::EllipsizeMode::End);
         text.set_max_width_chars(14);
         text.set_tooltip_text(Some(&net.name));
+        text.set_visible(!icon_only);
         set_level(&text, "");
         if net.kind == sys::NetKind::None {
             text.add_css_class("muted");
@@ -451,7 +539,8 @@ fn network() -> gtk::Widget {
 
 // ------------------------------------------------------------------ bluetooth
 
-fn bluetooth() -> gtk::Widget {
+fn bluetooth(o: &WidgetOpts) -> gtk::Widget {
+    let icon_only = o.format == "icon";
     let (content, icon, text) = icon_label("bluetooth-disabled-symbolic");
     let (pop, body) = popover_box();
     body.set_width_request(240);
@@ -497,7 +586,7 @@ fn bluetooth() -> gtk::Widget {
             let connected = bt.devices.iter().filter(|d| d.connected).count();
             icon.set_icon_name(Some(if bt.powered { "bluetooth-active-symbolic" } else { "bluetooth-disabled-symbolic" }));
             text.set_text(&if connected > 0 { connected.to_string() } else { String::new() });
-            text.set_visible(connected > 0);
+            text.set_visible(connected > 0 && !icon_only);
             clear(&list);
             if !bt.available {
                 list.append(&label("No Bluetooth adapter"));
@@ -547,8 +636,10 @@ fn volume_icon(volume: u32, muted: bool) -> &'static str {
     }
 }
 
-fn audio() -> gtk::Widget {
+fn audio(o: &WidgetOpts) -> gtk::Widget {
     let (content, icon, text) = icon_label("audio-volume-muted-symbolic");
+    // Icon only: the volume stays in the tooltip and the popover.
+    text.set_visible(o.format != "icon");
     let (pop, body) = popover_box();
     body.set_width_request(250);
     body.append(&title("Sound"));
@@ -576,12 +667,13 @@ fn audio() -> gtk::Widget {
     mute.connect_clicked(|_| sys::toggle_mute());
 
     let apply = {
-        let (icon, text, scale, updating) = (icon.clone(), text.clone(), scale.clone(), updating.clone());
+        let (icon, text, scale, updating, content) = (icon.clone(), text.clone(), scale.clone(), updating.clone(), content.clone());
         Rc::new(move |a: Option<sys::Audio>| {
             match a {
                 Some(a) => {
                     icon.set_icon_name(Some(volume_icon(a.volume, a.muted)));
                     text.set_text(&if a.muted { "muted".to_string() } else { format!("{}%", a.volume) });
+                    content.set_tooltip_text(Some(&format!("Volume {}%{}", a.volume, if a.muted { " (muted)" } else { "" })));
                     if a.muted { text.add_css_class("muted") } else { text.remove_css_class("muted") }
                     updating.set(true);
                     scale.set_value(a.volume as f64);

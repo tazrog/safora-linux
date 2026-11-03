@@ -1,5 +1,6 @@
 //! safora-bar — the Safora status bar: a GTK4 layer-shell window with pluggable widgets.
 
+mod extra;
 mod sys;
 mod widgets;
 
@@ -135,6 +136,8 @@ fn rebuild(app: &Rc<App>, config: Config) {
     root.set_start_widget(Some(&section(&ctx, &ctx.config.bar.left)));
     root.set_center_widget(Some(&section(&ctx, &ctx.config.bar.center)));
     root.set_end_widget(Some(&section(&ctx, &ctx.config.bar.right)));
+    // When space runs out, shrink the side sections (the window list scrolls) before the clock.
+    root.set_shrink_center_last(true);
     w.set_child(Some(&root));
 
     // Give new widgets the latest known state immediately.
@@ -151,7 +154,7 @@ fn section(ctx: &Rc<Ctx>, names: &[String]) -> gtk::Box {
     for name in names {
         if let Some(widget) = widgets::build(name, ctx) {
             widget.add_css_class("module");
-            widget.add_css_class(&format!("module-{name}"));
+            widget.add_css_class(&format!("module-{}", safora_common::config::widget_kind(name)));
             b.append(&widget);
         }
     }
@@ -190,16 +193,39 @@ window.safora-bar-window {{ background: transparent; }}
 .safora-bar .app.other-ws {{ opacity: 0.4; }}
 .safora-bar .app.focused {{ opacity: 1; background: {hover}; box-shadow: inset 0 -2px {accent}; }}
 .safora-bar .metric {{ opacity: 0.95; }}
-.safora-bar .muted {{ opacity: 0.5; }}
+.safora-bar .muted {{ opacity: 0.7; }}
 .safora-bar .warn {{ color: #e0af68; }}
 .safora-bar .crit {{ color: #f7768e; }}
 popover > contents {{
     background: {popbg}; color: {fg}; border-radius: {inner}px; padding: 8px;
     border: 1px solid {hover};
 }}
-popover button {{ border-radius: {inner}px; }}
+/* Everything inside the bar's popovers uses the bar's own colors, never the GTK theme's, so text
+   always contrasts with the background (light or dark theme alike). */
+popover > contents label, popover > contents image {{ color: {fg}; }}
+popover > contents list, popover > contents row, popover > contents scrolledwindow,
+popover > contents viewport {{ background: transparent; color: {fg}; }}
+popover button {{
+    border-radius: {inner}px; background: {btn}; color: {fg}; border: none; box-shadow: none;
+}}
+popover button:hover {{ background: {btn_hover}; }}
+popover button:active, popover button:checked {{ background: {btn_active}; }}
+popover entry, popover passwordentry {{
+    background: {btn}; color: {fg}; caret-color: {fg}; border: 1px solid {hover}; box-shadow: none;
+}}
+popover entry:focus-within, popover passwordentry:focus-within {{ border-color: {accent}; }}
+popover entry placeholder, popover passwordentry placeholder {{ color: {fg}; opacity: 0.7; }}
 popover row {{ border-radius: {inner}px; padding: 2px 4px; }}
-popover .title {{ font-weight: bold; opacity: 0.8; }}
+popover .muted {{ opacity: 0.7; }}
+/* Optional widgets. */
+.safora-bar .module-spacer {{ padding: 0; margin: 0; }}
+.safora-bar .module-separator {{ padding: 0; margin: 7px 4px; min-width: 1px; background: {sep}; }}
+.safora-bar .module-tray {{ padding: 0 2px; }}
+.safora-bar .module-tray button {{ padding: 0 5px; }}
+.safora-bar levelbar.meter trough {{ min-height: 6px; padding: 0; border: none; border-radius: 3px; background: {hover}; }}
+.safora-bar levelbar.meter block.filled {{ background: {accent}; border-radius: 3px; border: none; min-height: 6px; }}
+.safora-bar levelbar.meter block.empty {{ background: transparent; border: none; }}
+popover .title {{ font-weight: bold; }}
 "#,
         bg = rgba(&b.background, b.opacity),
         fg = b.foreground,
@@ -211,5 +237,9 @@ popover .title {{ font-weight: bold; opacity: 0.8; }}
         accent = b.accent,
         accent_fg = b.background,
         popbg = rgba(&b.background, 0.98),
+        btn = rgba(&b.foreground, 0.08),
+        btn_hover = rgba(&b.foreground, 0.18),
+        sep = rgba(&b.foreground, 0.30),
+        btn_active = rgba(&b.foreground, 0.26),
     )
 }

@@ -11,15 +11,27 @@ build() {
     fi
 
     local m
-    for m in bluetooth btusb btintel btbcm btrtl btmtk hidp uhid hid-generic evdev; do
+    # cmac/ccm/aes/ecdh: the Bluetooth stack loads these on demand (request_module) for LE pairing
+    # security (SMP) and Secure Simple Pairing. They are not hard module dependencies, so without
+    # them a Bluetooth LE keyboard can connect but its encrypted HID channel never comes up.
+    for m in bluetooth btusb btintel btbcm btrtl btmtk btmtksdio hci_uart hidp uhid hid-generic evdev \
+             cmac ccm aes_generic aesni_intel ecdh_generic ecc rfkill; do
         add_module "$m" 2>/dev/null || true
     done
+    # Vendor HID drivers (Logitech, Apple, Microsoft, ...), so keyboards that need them work too.
+    add_checked_modules '/drivers/hid/' 2>/dev/null || true
 
     add_binary /usr/lib/bluetooth/bluetoothd
     add_binary /usr/bin/bluetoothctl
     add_binary /usr/bin/dbus-daemon
 
+    # udev must label the new input device as a keyboard (ID_INPUT_KEYBOARD) or plymouth's password
+    # prompt won't listen to it.
+    add_udev_rule 60-input-id.rules
+    add_udev_rule 70-uaccess.rules 2>/dev/null || true
+
     [[ -f /etc/bluetooth/main.conf ]] && add_file /etc/bluetooth/main.conf
+    [[ -f /etc/bluetooth/input.conf ]] && add_file /etc/bluetooth/input.conf
     add_file /etc/saforabt/dbus.conf /etc/saforabt/dbus.conf
     add_file /etc/saforabt/devices /etc/saforabt/devices
 

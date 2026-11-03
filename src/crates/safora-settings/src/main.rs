@@ -8,7 +8,7 @@ use std::{cell::RefCell, rc::Rc};
 use gtk4 as gtk;
 use gtk::{gdk, glib, prelude::*};
 use safora_common::{
-    config::{BarPosition, Config, TileMode, WallpaperMode, ALL_WIDGETS},
+    config::{BarPosition, Config, TileMode, WallpaperMode},
     ipc::{self, Request},
 };
 
@@ -59,6 +59,7 @@ fn apply_theme(c: &mut Config, t: &Theme) {
 }
 
 mod more;
+mod widgets;
 
 fn main() -> glib::ExitCode {
     let app = gtk::Application::builder().application_id("org.safora.Settings").build();
@@ -86,7 +87,7 @@ fn main() -> glib::ExitCode {
         add_page(&stack, "wallpaper", "Wallpaper", wallpaper_page(&ctx));
         add_page(&stack, "display", "Display", display_page(&ctx));
         add_page(&stack, "bar", "Bar", bar_page(&ctx));
-        add_page(&stack, "widgets", "Widgets", widgets_page(&ctx));
+        add_page(&stack, "widgets", "Widgets", widgets::widgets_page(&ctx));
         add_page(&stack, "layout", "Windows", layout_page(&ctx));
         add_page(&stack, "fonts", "Fonts", fonts_page(&ctx));
         add_page(&stack, "sound", "Sound", safora_panels::sound_panel());
@@ -306,108 +307,6 @@ fn bar_page(ctx: &Rc<Ctx>) -> gtk::Box {
     let c = ctx.clone();
     p.append(&row("Accent", &color(&b.accent, move |h| c.update(|cfg| cfg.bar.accent = h))));
     p
-}
-
-fn section_of(cfg: &Config, name: &str) -> Option<usize> {
-    [&cfg.bar.left, &cfg.bar.center, &cfg.bar.right].iter().position(|l| l.iter().any(|w| w == name))
-}
-
-fn section_mut<'a>(cfg: &'a mut Config, idx: usize) -> &'a mut Vec<String> {
-    match idx {
-        0 => &mut cfg.bar.left,
-        1 => &mut cfg.bar.center,
-        _ => &mut cfg.bar.right,
-    }
-}
-
-fn widgets_page(ctx: &Rc<Ctx>) -> gtk::Box {
-    let outer = page();
-    outer.append(&heading("Bar widgets"));
-    let note = gtk::Label::new(Some("Switch widgets on or off, choose which side of the bar they appear on, and reorder them."));
-    note.set_xalign(0.0);
-    note.set_wrap(true);
-    outer.append(&note);
-    let list = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    outer.append(&list);
-    fill_widget_rows(ctx, &list);
-    outer
-}
-
-fn fill_widget_rows(ctx: &Rc<Ctx>, list: &gtk::Box) {
-    while let Some(c) = list.first_child() {
-        list.remove(&c);
-    }
-    for (name, title) in ALL_WIDGETS {
-        let cfg = ctx.cfg.borrow().clone();
-        let place = section_of(&cfg, name);
-        let r = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let l = gtk::Label::new(Some(title));
-        l.set_xalign(0.0);
-        l.set_hexpand(true);
-        r.append(&l);
-
-        let always_on = *name == "workspaces";
-        let sw = switch(place.is_some(), {
-            let (ctx, list, name) = (ctx.clone(), list.clone(), name.to_string());
-            move |on| {
-                if always_on {
-                    return;
-                }
-                ctx.update(|c| {
-                    if on {
-                        if section_of(c, &name).is_none() {
-                            c.bar.right.push(name.clone());
-                        }
-                    } else {
-                        c.bar.remove(&name);
-                    }
-                });
-                let (ctx, list) = (ctx.clone(), list.clone());
-                glib::idle_add_local_once(move || fill_widget_rows(&ctx, &list));
-            }
-        });
-        sw.set_sensitive(!always_on);
-        if always_on {
-            sw.set_tooltip_text(Some("The workspace switcher is always shown"));
-        }
-
-        if let Some(sec) = place {
-            let side = dropdown(&["Left", "Center", "Right"], sec, {
-                let (ctx, list, name) = (ctx.clone(), list.clone(), name.to_string());
-                move |i| {
-                    ctx.update(|c| {
-                        c.bar.remove(&name);
-                        section_mut(c, i).push(name.clone());
-                    });
-                    let (ctx, list) = (ctx.clone(), list.clone());
-                    glib::idle_add_local_once(move || fill_widget_rows(&ctx, &list));
-                }
-            });
-            r.append(&side);
-            for (icon, delta) in [("go-up-symbolic", -1i32), ("go-down-symbolic", 1)] {
-                let b = gtk::Button::from_icon_name(icon);
-                let (ctx, list, name) = (ctx.clone(), list.clone(), name.to_string());
-                b.connect_clicked(move |_| {
-                    ctx.update(|c| {
-                        if let Some(sec) = section_of(c, &name) {
-                            let v = section_mut(c, sec);
-                            if let Some(pos) = v.iter().position(|w| *w == name) {
-                                let to = pos as i32 + delta;
-                                if to >= 0 && (to as usize) < v.len() {
-                                    v.swap(pos, to as usize);
-                                }
-                            }
-                        }
-                    });
-                    let (ctx, list) = (ctx.clone(), list.clone());
-                    glib::idle_add_local_once(move || fill_widget_rows(&ctx, &list));
-                });
-                r.append(&b);
-            }
-        }
-        r.append(&sw);
-        list.append(&r);
-    }
 }
 
 fn layout_page(ctx: &Rc<Ctx>) -> gtk::Box {

@@ -29,7 +29,6 @@ struct Plan {
     timezone: String,
     keyboard: String,
     uefi: bool,
-    bt_keyboard: bool,
     claude_code: bool,
     claude_web: bool,
     /// "none", "quick" (discard every block) or "full" (one pass of random data).
@@ -90,18 +89,35 @@ pub fn passphrase_score(p: &str) -> u8 {
 
 // ------------------------------------------------------------------- system
 
+/// Device the live system was booted from ("" if unknown). With enough RAM archiso copies the system
+/// to RAM and unmounts the medium (copytoram=auto), so fall back to the ISO's UUID on the kernel command line.
+fn boot_medium() -> String {
+    let run = |cmd: &str, args: &[&str]| {
+        Command::new(cmd)
+            .args(args)
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default()
+    };
+    let src = run("findmnt", &["-no", "SOURCE", "/run/archiso/bootmnt"]);
+    if !src.is_empty() {
+        return src;
+    }
+    let cmdline = std::fs::read_to_string("/proc/cmdline").unwrap_or_default();
+    match cmdline.split_whitespace().find_map(|a| a.strip_prefix("archisosearchuuid=")) {
+        Some(uuid) if !uuid.is_empty() => run("blkid", &["-U", uuid]),
+        _ => String::new(),
+    }
+}
+
 fn list_disks() -> Vec<Disk> {
     let out = Command::new("lsblk").args(["-J", "-d", "-b", "-o", "NAME,SIZE,MODEL,TYPE,RO"]).output();
     let Ok(out) = out else { return vec![] };
     let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else { return vec![] };
 
     // Never offer the medium we booted from.
-    let boot_src = Command::new("findmnt")
-        .args(["-no", "SOURCE", "/run/archiso/bootmnt"])
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default();
+    let boot_src = boot_medium();
 
     v["blockdevices"]
         .as_array()
@@ -113,7 +129,7 @@ fn list_disks() -> Vec<Disk> {
             if ["zram", "loop", "ram", "sr", "fd", "nbd"].iter().any(|p| name.starts_with(p)) {
                 return None;
             }
-            if boot_src.starts_with(&format!("/dev/{name}")) {
+            if !boot_src.is_empty() && boot_src.starts_with(&format!("/dev/{name}")) {
                 return None;
             }
             let size = d["size"].as_u64().or_else(|| d["size"].as_str()?.parse().ok()).unwrap_or(0);
@@ -124,23 +140,6 @@ fn list_disks() -> Vec<Disk> {
             })
         })
         .collect()
-}
-
-/// Names of the Bluetooth devices paired in the live session.
-fn paired_bluetooth() -> Vec<String> {
-    // `timeout` guards against bluetoothctl waiting forever when there is no Bluetooth adapter.
-    Command::new("timeout")
-        .args(["3", "bluetoothctl", "devices", "Paired"])
-        .output()
-        .ok()
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .filter_map(|l| l.trim().strip_prefix("Device "))
-                .filter_map(|r| r.split_once(' ').map(|(_, name)| name.to_string()))
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 fn timezones() -> Vec<String> {
@@ -202,6 +201,10 @@ fn vbox() -> gtk::Box {
 fn dropdown_from(items: &[String], select: &str) -> gtk::DropDown {
     let refs: Vec<&str> = items.iter().map(String::as_str).collect();
     let d = gtk::DropDown::from_strings(&refs);
+    // Search needs an expression that yields each item's text; without it typing filters nothing.
+    d.set_expression(Some(gtk::PropertyExpression::new(gtk::StringObject::static_type(), gtk::Expression::NONE, "string")));
+    // Match anywhere ("berlin" finds Europe/Berlin), not only at the start.
+    d.set_search_match_mode(gtk::StringFilterMatchMode::Substring);
     if let Some(pos) = items.iter().position(|i| i == select) {
         d.set_selected(pos as u32);
     }
@@ -325,55 +328,6 @@ fn build_ui(app: &gtk::Application) {
     note.set_xalign(0.0);
     note.add_css_class("dim-label");
     enc_fields.append(&note);
-    let bt_check = gtk::CheckButton::with_label("Let a paired Bluetooth keyboard type this passphrase at startup (experimental)");
-    let bt_status = gtk::Label::new(None);
-    bt_status.set_xalign(0.0);
-    bt_status.set_wrap(true);
-    bt_status.add_css_class("dim-label");
-    let bt_refresh = gtk::Button::with_label("Check paired devices");
-    bt_refresh.set_halign(gtk::Align::Start);
-    let bt_note = gtk::Label::new(Some(
-        "Pair the keyboard first: bar → Bluetooth → Pair new device. The pairing key must be stored in the \
-         unencrypted /boot partition so the keyboard can connect before the disk is unlocked; anyone who \
-         can read /boot could learn it. A USB keyboard always works.",
-    ));
-    bt_note.set_xalign(0.0);
-    bt_note.set_wrap(true);
-    bt_note.add_css_class("dim-label");
-    enc_fields.append(&bt_check);
-    enc_fields.append(&bt_status);
-    enc_fields.append(&bt_refresh);
-    enc_fields.append(&bt_note);
-    // Paired devices are queried in the background so a missing adapter never delays the UI.
-    let bt_names: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
-    {
-        let (st, chk, names_cache) = (bt_status.clone(), bt_check.clone(), bt_names.clone());
-        let refresh = Rc::new(move || {
-            let (st, chk, names_cache) = (st.clone(), chk.clone(), names_cache.clone());
-            st.set_text("Looking for paired devices…");
-            glib::spawn_future_local(async move {
-                let names = gtk::gio::spawn_blocking(paired_bluetooth).await.unwrap_or_default();
-                st.set_text(&if names.is_empty() {
-                    "No paired Bluetooth devices found.".to_string()
-                } else {
-                    format!("Paired: {}", names.join(", "))
-                });
-                if names.is_empty() {
-                    chk.set_active(false);
-                }
-                *names_cache.borrow_mut() = names;
-            });
-        });
-        let r2 = refresh.clone();
-        bt_refresh.connect_clicked(move |_| r2());
-        let r3 = refresh.clone();
-        bt_check.connect_toggled(move |c| {
-            if c.is_active() {
-                r3();
-            }
-        });
-        refresh();
-    }
     enc_page.append(&enc_fields);
     {
         let (st, stt) = (strength.clone(), strength_text.clone());
@@ -490,13 +444,10 @@ fn build_ui(app: &gtk::Application) {
             subtitle: "Protect your files if your computer is lost or stolen.",
             body: enc_page.upcast(),
             validate: Box::new({
-                let (sw, p1, p2, bt, bt_cache) = (enc_switch.clone(), pass1.clone(), pass2.clone(), bt_check.clone(), bt_names.clone());
+                let (sw, p1, p2) = (enc_switch.clone(), pass1.clone(), pass2.clone());
                 move || {
                     if !sw.is_active() {
                         return Ok(());
-                    }
-                    if bt.is_active() && bt_cache.borrow().is_empty() {
-                        return Err("No paired Bluetooth keyboard found. Pair one first, or untick the option.".into());
                     }
                     let (a, b) = (p1.text().to_string(), p2.text().to_string());
                     if a.chars().count() < 8 {
@@ -625,8 +576,8 @@ fn build_ui(app: &gtk::Application) {
 
     next.connect_clicked({
         let (show, current, pages, error, plan, win) = (show.clone(), current.clone(), pages.clone(), error.clone(), plan.clone(), win.clone());
-        let (disk_list, disks, enc_switch, pass1, tz, km, full, user, host, up1, bt_check, claude_code, claude_web, wipe) =
-            (disk_list.clone(), disks.clone(), enc_switch.clone(), pass1.clone(), tz.clone(), km.clone(), full.clone(), user.clone(), host.clone(), up1.clone(), bt_check.clone(), claude_code.clone(), claude_web.clone(), wipe.clone());
+        let (disk_list, disks, enc_switch, pass1, tz, km, full, user, host, up1, claude_code, claude_web, wipe) =
+            (disk_list.clone(), disks.clone(), enc_switch.clone(), pass1.clone(), tz.clone(), km.clone(), full.clone(), user.clone(), host.clone(), up1.clone(), claude_code.clone(), claude_web.clone(), wipe.clone());
         let (summary, progress, status, log, done_label_next) = (summary.clone(), progress.clone(), status.clone(), log.clone(), next.clone());
         move |_| {
             let i = *current.borrow();
@@ -647,7 +598,6 @@ fn build_ui(app: &gtk::Application) {
                 p.disk = disk.as_ref().map(|d| d.path.clone()).unwrap_or_default();
                 p.encrypt = enc_switch.is_active();
                 p.passphrase = pass1.text().to_string();
-                p.bt_keyboard = enc_switch.is_active() && bt_check.is_active();
                 p.wipe = wipe_values.get(wipe.selected() as usize).copied().unwrap_or("none").to_string();
                 p.claude_code = claude_code.is_active();
                 p.claude_web = claude_web.is_active();

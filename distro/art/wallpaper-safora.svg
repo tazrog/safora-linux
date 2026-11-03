@@ -19,4 +19,19 @@
     <g transform="scale(420)"><path d="M0 -1 C0.55 -0.78 0.95 -0.72 1 -0.7 C1 0.05 0.7 0.65 0 1 C-0.7 0.65 -1 0.05 -1 -0.7 C-0.95 -0.72 -0.55 -0.78 0 -1 Z" stroke-width="0.004"/></g>
     <g transform="scale(520)"><path d="M0 -1 C0.55 -0.78 0.95 -0.72 1 -0.7 C1 0.05 0.7 0.65 0 1 C-0.7 0.65 -1 0.05 -1 -0.7 C-0.95 -0.72 -0.55 -0.78 0 -1 Z" stroke-width="0.003"/></g>
   </g>
+
+  <g transform="translate(1280.0 0) scale(1.0)">
+    <svg x="-140.0" y="193.0" width="280" height="280" viewBox="0 0 512 512"><defs>
+    <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a3a6e"/><stop offset="1" stop-color="#241a3a"/></linearGradient>
+    <linearGradient id="cy" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7ff0ea"/><stop offset="1" stop-color="#2bb8c4"/></linearGradient>
+  </defs>
+  <g transform="translate(256 262)">
+    <g transform="scale(215)"><path d="M0 -1 C0.55 -0.78 0.95 -0.72 1 -0.7 C1 0.05 0.7 0.65 0 1 C-0.7 0.65 -1 0.05 -1 -0.7 C-0.95 -0.72 -0.55 -0.78 0 -1 Z" fill="url(#g2)"/></g>
+    <g transform="scale(215)"><path transform="scale(0.8)" d="M0 -1 C0.55 -0.78 0.95 -0.72 1 -0.7 C1 0.05 0.7 0.65 0 1 C-0.7 0.65 -1 0.05 -1 -0.7 C-0.95 -0.72 -0.55 -0.78 0 -1 Z" fill="none" stroke="#ece8f5" stroke-opacity="0.5" stroke-width="0.035"/></g>
+    <path d="M 62 -92 C -10 -118 -78 -86 -66 -40 C -56 4 56 -6 66 48 C 78 104 -2 122 -68 92" fill="none" stroke="url(#cy)" stroke-width="26" stroke-linecap="round"/>
+  </g>
+</svg>
+    <g transform="translate(0 600)"><text x="0" y="0" text-anchor="middle" font-family="Roboto" font-weight="300" font-size="86" letter-spacing="3.4" fill="#ece8f5">Safora <tspan fill="#7ff0ea">Linux</tspan></text></g>
+    <g transform="translate(0 667)"><text x="0" y="0" text-anchor="middle" font-family="Roboto" font-weight="300" font-size="32" letter-spacing="1.9" fill="#ece8f5" fill-opacity="0.78">Simple by Nature, Private by default</text></g>
+  </g>
 </svg>

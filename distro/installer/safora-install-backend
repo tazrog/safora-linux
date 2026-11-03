@@ -31,7 +31,8 @@ cleanup() {
     [[ $DRY == 1 ]] && return
     sync
     mountpoint -q "$MNT" && umount -R "$MNT"
-    [[ -e /dev/mapper/$CRYPT_NAME ]] && cryptsetup close "$CRYPT_NAME"
+    if [[ -e /dev/mapper/$CRYPT_NAME ]]; then cryptsetup close "$CRYPT_NAME"; fi
+    return 0
 }
 trap cleanup EXIT
 
@@ -51,7 +52,6 @@ PASSWORD=$(get password)
 TZ_=$(get timezone)
 KEYBOARD=$(get keyboard)
 UEFI=$(get uefi)
-BT_KB=$(get bt_keyboard)
 CLAUDE_CODE=$(get claude_code)
 CLAUDE_WEB=$(get claude_web)
 WIPE=$(get wipe)
@@ -74,6 +74,10 @@ fi
 # Refuse to touch the medium we booted from.
 if [[ $DRY != 1 ]]; then
     boot_src=$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null || true)
+    # copytoram unmounts the medium; find it by the ISO's UUID instead.
+    if [[ -z $boot_src ]] && iso_uuid=$(grep -o 'archisosearchuuid=[^ ]*' /proc/cmdline); then
+        boot_src=$(blkid -U "${iso_uuid#*=}" 2>/dev/null || true)
+    fi
     if [[ -n $boot_src && $boot_src == "$DISK"* ]]; then fail "$DISK is the installation medium"; fi
 fi
 
@@ -177,9 +181,19 @@ fi
 # ------------------------------------------------------------------------ configure
 progress 72 "Configuring the system"
 if [[ $DRY != 1 ]]; then
-    # mkarchiso keeps the kernel on the ISO, not inside the root image: put it on the new /boot.
-    KERNEL_SRC=$(ls /run/archiso/bootmnt/arch/boot/x86_64/vmlinuz-linux-hardened 2>/dev/null | head -1)
-    [[ -n $KERNEL_SRC ]] || fail "kernel image not found on the installation medium"
+    # mkarchiso empties /boot in the root image, so the new /boot needs the kernel from elsewhere.
+    # The kernel package also ships it as /usr/lib/modules/<version>/vmlinuz (copied above); use that.
+    # The ISO's copy is only a fallback: on machines with enough RAM archiso copies the system to RAM
+    # (copytoram=auto) and unmounts /run/archiso/bootmnt, so the medium is usually gone by now.
+    KERNEL_SRC=""
+    for k in "$MNT"/usr/lib/modules/*/vmlinuz /run/archiso/bootmnt/arch/boot/x86_64/vmlinuz-linux-hardened; do
+        if [[ -f $k ]]; then
+            if [[ $k == "$MNT"/usr/lib/modules/* && $(cat "${k%/vmlinuz}/pkgbase" 2>/dev/null) != linux-hardened ]]; then continue; fi
+            KERNEL_SRC=$k; break
+        fi
+    done
+    [[ -n $KERNEL_SRC ]] || fail "kernel image not found (looked in /usr/lib/modules and on the installation medium)"
+    echo "Kernel: $KERNEL_SRC"
     install -Dm644 "$KERNEL_SRC" "$MNT/boot/vmlinuz-linux-hardened"
 
     genfstab -U "$MNT" > "$MNT/etc/fstab"
@@ -233,28 +247,8 @@ GREETD
         chmod -R go-rwx "$MNT/var/lib/bluetooth"
     fi
 
-    # Optional: let a paired Bluetooth keyboard type the passphrase (see the saforabt hook).
-    BT_HOOK=""
-    if [[ $ENCRYPT == true && $BT_KB == true ]]; then
-        mapfile -t BT_MACS < <(timeout 5 bluetoothctl devices Paired 2>/dev/null | awk '$1=="Device"{print $2}')
-        if [[ ${#BT_MACS[@]} -gt 0 && -d /var/lib/bluetooth ]]; then
-            install -d -m 700 "$MNT/etc/saforabt/state" "$MNT/var/lib/bluetooth"
-            cp -a /var/lib/bluetooth/. "$MNT/etc/saforabt/state/"
-            cp -a /var/lib/bluetooth/. "$MNT/var/lib/bluetooth/"
-            printf '%s\n' "${BT_MACS[@]}" > "$MNT/etc/saforabt/devices"
-            /usr/lib/safora/saforabt-firmware > "$MNT/etc/saforabt/firmware" || true
-            : > "$MNT/etc/saforabt/enabled"
-            # Keys stay root-only; the folder and the "enabled" marker are readable so Settings can show the state.
-            chmod -R go-rwx "$MNT/etc/saforabt/state" "$MNT/etc/saforabt/devices" "$MNT/var/lib/bluetooth"
-            chmod 755 "$MNT/etc/saforabt"; chmod 644 "$MNT/etc/saforabt/enabled" "$MNT/etc/saforabt/firmware"
-            BT_HOOK="saforabt "
-            echo "Bluetooth keyboard unlock enabled for ${#BT_MACS[@]} paired device(s)"
-        else
-            echo "note: no paired Bluetooth devices were found; Bluetooth unlock not enabled"
-        fi
-    fi
     if [[ $ENCRYPT == true ]]; then
-        HOOKS="base udev autodetect microcode modconf kms plymouth keyboard keymap consolefont block ${BT_HOOK}encrypt filesystems fsck"
+        HOOKS="base udev autodetect microcode modconf kms plymouth keyboard keymap consolefont block encrypt filesystems fsck"
     else
         HOOKS="base udev autodetect microcode modconf kms plymouth keyboard keymap consolefont block filesystems fsck"
     fi
@@ -309,6 +303,13 @@ GREETD
         -e "s|^GRUB_DISTRIBUTOR=.*|GRUB_DISTRIBUTOR=\"Safora Linux\"|" \
         "$MNT/etc/default/grub"
     grep -q '^GRUB_DISABLE_OS_PROBER' "$MNT/etc/default/grub" || echo 'GRUB_DISABLE_OS_PROBER=true' >> "$MNT/etc/default/grub"
+    # Safora boot-menu theme. It lives on the unencrypted /boot so GRUB can read it.
+    if [[ -f $MNT/usr/share/safora/grub-theme/theme.txt ]]; then
+        install -d "$MNT/boot/grub/themes/safora"
+        install -m644 "$MNT"/usr/share/safora/grub-theme/* "$MNT/boot/grub/themes/safora/"
+        sed -i -e '/^#\?GRUB_THEME=/d' -e 's/^#\?GRUB_GFXMODE=.*/GRUB_GFXMODE=auto/' "$MNT/etc/default/grub"
+        echo 'GRUB_THEME="/boot/grub/themes/safora/theme.txt"' >> "$MNT/etc/default/grub"
+    fi
 
     progress 88 "Installing the bootloader"
     if [[ $UEFI == true ]]; then
@@ -349,6 +350,15 @@ Icon=web-browser
 Categories=Network;Utility;
 DESKTOP
     fi
+
+    # Home directory: everything in it belongs to the user, nobody else can enter it, and the usual
+    # folders (Desktop, Documents, Downloads, Music, Pictures, Videos, ...) exist from the first login.
+    arch-chroot "$MNT" runuser -u "$USERNAME" -- env HOME="/home/$USERNAME" xdg-user-dirs-update \
+        || echo "note: could not create the standard folders in the home directory"
+    arch-chroot "$MNT" chown -R "$USERNAME:$USERNAME" "/home/$USERNAME"
+    chmod 700 "$MNT/home/$USERNAME"
+    chmod -R go-w "$MNT/home/$USERNAME"
+    chmod 755 "$MNT/home"; chown root:root "$MNT/home"
 
     install -m600 "$LOG" "$MNT/var/log/safora-install.log" 2>/dev/null || true
 

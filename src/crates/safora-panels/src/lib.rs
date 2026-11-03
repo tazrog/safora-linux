@@ -550,6 +550,8 @@ pub fn network_panel() -> gtk::Box {
     }
     p.append(&scan);
 
+    // Show the last known networks at once, then the result of a fresh scan.
+    refresh(false);
     refresh(true);
     {
         let r = refresh.clone();

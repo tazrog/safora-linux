@@ -8,6 +8,28 @@ use safora_common::sys;
 
 use crate::{dropdown, heading, page, row, spin, switch, Ctx};
 
+/// power-profiles-daemon's D-Bus name, object and interface.
+const PPD: (&str, &str, &str) =
+    ("org.freedesktop.UPower.PowerProfiles", "/org/freedesktop/UPower/PowerProfiles", "org.freedesktop.UPower.PowerProfiles");
+
+/// A power-profiles-daemon property as JSON (`null` when the daemon is missing).
+fn ppd_json(prop: &str) -> serde_json::Value {
+    let out = cmd_out("busctl", &["--system", "--json=short", "get-property", PPD.0, PPD.1, PPD.2, prop]);
+    serde_json::from_str::<serde_json::Value>(&out).map(|v| v["data"].clone()).unwrap_or_default()
+}
+
+fn ppd_get(prop: &str) -> String {
+    ppd_json(prop).as_str().unwrap_or_default().to_string()
+}
+
+/// Power modes this computer offers ("power-saver", "balanced", "performance").
+fn ppd_profiles() -> Vec<String> {
+    ppd_json("Profiles")
+        .as_array()
+        .map(|a| a.iter().filter_map(|p| p["Profile"]["data"].as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
+}
+
 fn note(text: &str) -> gtk::Label {
     let l = gtk::Label::new(Some(text));
     l.set_xalign(0.0);
@@ -99,16 +121,19 @@ pub fn power_page(ctx: &Rc<Ctx>) -> gtk::Box {
     p.append(&note("The timers count from the last keyboard or mouse action. A full-screen window (a video, say) keeps the screen on."));
 
     p.append(&heading("Power use"));
-    let have_ppd = !cmd_out("powerprofilesctl", &["get"]).is_empty();
-    if have_ppd {
-        let cur = cmd_out("powerprofilesctl", &["get"]);
-        let idx = PROFILES.iter().position(|(_, v)| *v == cur).unwrap_or(1);
-        let labels: Vec<&str> = PROFILES.iter().map(|(l, _)| *l).collect();
+    // Talk to power-profiles-daemon over D-Bus with busctl (part of systemd). powerprofilesctl is a
+    // Python script that needs python-gobject, so it is not relied on.
+    let available = ppd_profiles();
+    let offered: Vec<(&str, &str)> = PROFILES.iter().copied().filter(|(_, v)| available.iter().any(|a| a == v)).collect();
+    if !offered.is_empty() {
+        let cur = ppd_get("ActiveProfile");
+        let idx = offered.iter().position(|(_, v)| *v == cur).or_else(|| offered.iter().position(|(_, v)| *v == "balanced")).unwrap_or(0);
+        let labels: Vec<&str> = offered.iter().map(|(l, _)| *l).collect();
         let c = ctx.clone();
         p.append(&row("Power mode", &dropdown(&labels, idx, move |i| {
-            let v = PROFILES[i].1;
+            let v = offered[i].1;
             c.update(|cfg| cfg.power.profile = v.into());
-            sys::spawn("powerprofilesctl", &["set", v]);
+            sys::spawn("busctl", &["--system", "set-property", PPD.0, PPD.1, PPD.2, "ActiveProfile", "s", v]);
         })));
         p.append(&note("Performance runs the processor faster and uses more power; Power saver does the opposite."));
     } else {

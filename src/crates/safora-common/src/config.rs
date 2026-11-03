@@ -19,7 +19,87 @@ pub const ALL_WIDGETS: &[(&str, &str)] = &[
     ("bluetooth", "Bluetooth"),
     ("audio", "Audio (PulseAudio)"),
     ("power", "Power options"),
+    ("netspeed", "Network use"),
+    ("temperature", "CPU temperature"),
+    ("battery", "Battery"),
+    ("weather", "Weather"),
+    ("tray", "App tray"),
+    ("spacer", "Spacer"),
+    ("separator", "Separator"),
 ];
+
+/// Widgets that can appear more than once. Extra copies are named `kind#n` (e.g. `spacer#2`).
+pub const REPEATABLE: &[&str] = &["spacer", "separator"];
+
+/// The widget kind of a bar entry: `spacer#2` → `spacer`.
+pub fn widget_kind(name: &str) -> &str {
+    name.split('#').next().unwrap_or(name)
+}
+
+/// Display title of a bar entry (`spacer#2` → "Spacer 2").
+pub fn widget_title(name: &str) -> String {
+    let kind = widget_kind(name);
+    let base = ALL_WIDGETS.iter().find(|(k, _)| *k == kind).map(|(_, t)| t.to_string()).unwrap_or_else(|| kind.to_string());
+    match name.split_once('#') {
+        Some((_, n)) => format!("{base} {n}"),
+        None => base,
+    }
+}
+
+/// Per-widget settings, stored as `[bar.widget.<name>]`. Empty / zero values mean "the widget's default";
+/// each widget only reads the fields that apply to it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WidgetOpts {
+    /// How a value is drawn: "text", "graph", "meter" or "icon".
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub display: String,
+    /// Widget-specific format preset (e.g. "percent", "used-total"); for the clock also a custom strftime pattern.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub format: String,
+    /// Hide the name in front of the value ("CPU", "RAM", ...).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub hide_label: bool,
+    /// Update interval in seconds (minutes for the weather).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub interval: u32,
+    /// Width in pixels of a graph, meter or spacer.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub width: u32,
+    /// "metric" or "imperial".
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub units: String,
+    /// What to measure: the disk's mount point, the network interface, ...
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub source: String,
+    /// Weather: the place, as typed by the user (e.g. "Berlin").
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub location: String,
+    /// App tray: desktop file IDs, e.g. "firefox.desktop".
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub apps: Vec<String>,
+}
+
+/// strftime pattern for a clock format preset (or the user's own pattern).
+pub fn clock_pattern(format: &str, h24: bool) -> String {
+    let t = if h24 { "%H:%M" } else { "%I:%M %p" };
+    let ts = if h24 { "%H:%M:%S" } else { "%I:%M:%S %p" };
+    match format {
+        "time" => t.into(),
+        "seconds" => ts.into(),
+        "date" => "%a %d %b %Y".into(),
+        "iso" => format!("%Y-%m-%d {t}"),
+        custom if custom.contains('%') => custom.into(),
+        _ => format!("%a %d %b   {t}"),
+    }
+}
+
+/// Apps the app tray shows until the user picks their own.
+pub const DEFAULT_TRAY: &[&str] = &["firefox.desktop", "Alacritty.desktop", "pcmanfm.desktop", "safora-settings.desktop"];
+
+fn is_zero(v: &u32) -> bool {
+    *v == 0
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -206,7 +286,7 @@ pub struct Power {
     pub suspend_minutes: u32,
     /// Minutes without input before the screen locks (0 = never).
     pub lock_minutes: u32,
-    /// "performance", "balanced" or "power-saver" (applied with powerprofilesctl when available).
+    /// "performance", "balanced" or "power-saver" (applied through power-profiles-daemon when available).
     pub profile: String,
 }
 
@@ -318,6 +398,8 @@ pub struct Bar {
     pub left: Vec<String>,
     pub center: Vec<String>,
     pub right: Vec<String>,
+    /// Settings of individual widgets, keyed by their name in `left`/`center`/`right`.
+    pub widget: BTreeMap<String, WidgetOpts>,
 }
 
 impl Default for Bar {
@@ -345,6 +427,7 @@ impl Default for Bar {
                 "audio".into(),
                 "power".into(),
             ],
+            widget: BTreeMap::new(),
         }
     }
 }
@@ -359,6 +442,19 @@ impl Bar {
         for list in [&mut self.left, &mut self.center, &mut self.right] {
             list.retain(|w| w != widget);
         }
+    }
+
+    /// Settings of the widget `name` (defaults when none are stored).
+    pub fn opts(&self, name: &str) -> WidgetOpts {
+        self.widget.get(name).cloned().unwrap_or_default()
+    }
+
+    /// A free name for one more copy of a repeatable widget (`spacer`, `spacer#2`, ...).
+    pub fn new_instance(&self, kind: &str) -> String {
+        if !self.is_enabled(kind) {
+            return kind.to_string();
+        }
+        (2..).map(|n| format!("{kind}#{n}")).find(|n| !self.is_enabled(n)).unwrap_or_else(|| kind.to_string())
     }
 
     /// The bar must always show the workspace switcher; put it back if it was removed.
@@ -499,5 +595,31 @@ mod tests {
         assert_eq!(cfg.power.lock_minutes, 5);
         assert_eq!(cfg.input.repeat_rate, 30);
         assert_eq!(cfg.accessibility.cursor_size(), 24);
+    }
+
+    #[test]
+    fn widget_options_round_trip() {
+        let mut cfg = Config::default();
+        cfg.bar.right.push("spacer".into());
+        let extra = cfg.bar.new_instance("spacer");
+        assert_eq!(extra, "spacer#2");
+        cfg.bar.right.push(extra.clone());
+        cfg.bar.widget.insert("cpu".into(), WidgetOpts { display: "graph".into(), width: 60, ..Default::default() });
+        cfg.bar.widget.insert(extra.clone(), WidgetOpts { width: 40, ..Default::default() });
+        let text = toml::to_string(&cfg).unwrap();
+        let back: Config = toml::from_str(&text).unwrap();
+        assert_eq!(back.bar.opts("cpu").display, "graph");
+        assert_eq!(back.bar.opts("spacer#2").width, 40);
+        assert_eq!(back.bar.opts("ram"), WidgetOpts::default());
+        assert_eq!(widget_kind("spacer#2"), "spacer");
+        assert_eq!(widget_title("spacer#2"), "Spacer 2");
+        assert_eq!(widget_title("cpu"), "CPU usage");
+    }
+
+    #[test]
+    fn old_configs_without_widget_settings_still_load() {
+        let cfg: Config = toml::from_str("[bar]\nright = [\"cpu\", \"clock\"]\n").unwrap();
+        assert!(cfg.bar.widget.is_empty());
+        assert_eq!(cfg.bar.opts("cpu"), WidgetOpts::default());
     }
 }

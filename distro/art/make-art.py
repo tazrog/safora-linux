@@ -63,6 +63,53 @@ svgs = {
     "bullet.svg": '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14"><circle cx="7" cy="7" r="5" fill="#ece8f5"/></svg>',
     "entry.svg": '<svg xmlns="http://www.w3.org/2000/svg" width="380" height="48"><rect x="1.5" y="1.5" width="377" height="45" rx="12" fill="#1b1528" fill-opacity="0.92" stroke="#3dd6d0" stroke-opacity="0.7" stroke-width="2"/></svg>',
 }
+NAME, TAGLINE = "Safora Linux", "Simple by Nature, Private by default"
+LOGO_INNER = logo[logo.index("<defs>"):logo.rindex("</svg>")]
+
+def wordmark(size, fg="#ece8f5", accent="#7ff0ea"):
+    """'Safora Linux' wordmark: light weight, 'Linux' in the wallpaper's cyan."""
+    return (f'<text x="0" y="0" text-anchor="middle" font-family="Roboto" font-weight="300" font-size="{size}" '
+            f'letter-spacing="{size * 0.04:.1f}" fill="{fg}">Safora <tspan fill="{accent}">Linux</tspan></text>')
+
+def tagline(size, op=0.78, fg="#ece8f5"):
+    return (f'<text x="0" y="0" text-anchor="middle" font-family="Roboto" font-weight="300" font-size="{size}" '
+            f'letter-spacing="{size * 0.06:.1f}" fill="{fg}" fill-opacity="{op}">{TAGLINE}</text>')
+
+def text_png(name, body, w, h):
+    """A transparent strip with centred text (the boot splash scales it to the screen)."""
+    return f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}"><g transform="translate({w/2} {h*0.78})">{body}</g></svg>'
+
+def branded(wall_svg, vb, w, h, logo_y, logo_s, name_y, name_size, tag_y, tag_size, fg="#ece8f5", accent="#7ff0ea"):
+    """A wallpaper (cropped by viewBox) with the logo, name and tagline: desktop wallpapers, GRUB and BIOS menus."""
+    inner = wall_svg[wall_svg.index("<defs>"):wall_svg.rindex("</svg>")]
+    vx, vy, vw, vh = vb
+    k = vw / w
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="{vx} {vy} {vw} {vh}">
+  {inner}
+  <g transform="translate({vx + vw/2} {vy}) scale({k})">
+    <svg x="{-logo_s/2}" y="{logo_y - logo_s/2}" width="{logo_s}" height="{logo_s}" viewBox="0 0 512 512">{LOGO_INNER}</svg>
+    <g transform="translate(0 {name_y})">{wordmark(name_size, fg, accent)}</g>
+    <g transform="translate(0 {tag_y})">{tagline(tag_size, fg=fg)}</g>
+  </g>
+</svg>'''
+
+# Desktop wallpapers (2560x1440): the same layout as the GRUB menu and boot splash, so the look carries
+# through from boot to desktop.
+DESK = dict(vb=(0, 0, 2560, 1440), w=2560, h=1440, logo_y=333, logo_s=280, name_y=600, name_size=86, tag_y=667, tag_size=32)
+svgs.update({
+    "wallpaper-safora.svg": branded(dark_default, **DESK),
+    "wallpaper-aurora.svg": branded(dark_aurora, **DESK),
+    "wallpaper-dawn.svg": branded(light_dawn, **DESK, fg="#2a2140", accent="#1d8f99"),
+})
+svgs.update({
+    "plymouth-name.svg": text_png("name", wordmark(64), 900, 96),
+    "plymouth-tagline.svg": text_png("tagline", tagline(26, 0.8), 900, 44),
+    # GRUB (1920x1080): branding in the upper part, the menu sits below it (see grub/theme.txt).
+    "grub-background.svg": branded(dark_default, (0, 0, 2560, 1440), 1920, 1080, 250, 210, 450, 64, 500, 24),
+    # syslinux BIOS menu (640x480, 4:3 crop of the wallpaper): branding above the menu rows.
+    "syslinux-splash.svg": branded(dark_default, (320, 0, 1920, 1440), 640, 480, 50, 66, 108, 24, 128, 10),
+})
+
 for n, c in svgs.items():
     (here / n).write_text(c)
 
@@ -83,4 +130,19 @@ render("logo.svg", ply / "logo.png", 180, 180)
 render("logo.svg", here / "logo-512.png")
 for n in ("dot", "bullet", "entry"):
     render(n + ".svg", ply / (n + ".png"))
+# Boot splash: the same wallpaper as the desktop, plus the wordmark and tagline.
+(here / "wallpaper-plain.svg").write_text(dark_default)
+render("wallpaper-plain.svg", ply / "background.png", 1920, 1080)
+render("plymouth-name.svg", ply / "name.png")
+render("plymouth-tagline.svg", ply / "tagline.png")
+grub = prof / "safora/grub-theme"
+grub.mkdir(parents=True, exist_ok=True)
+render("grub-background.svg", grub / "background.png")
+render("syslinux-splash.svg", here.parent / "profile/syslinux/splash.png")
 print("art done")
+
+# GRUB theme fonts (bitmap .pf2, made from the same Roboto the desktop uses).
+for size in (18, 26):
+    subprocess.run(["grub-mkfont", "-s", str(size), "-o", str(grub / f"roboto-{size}.pf2"),
+                    "/usr/share/fonts/TTF/Roboto-Regular.ttf"], check=True)
+print("grub fonts done")

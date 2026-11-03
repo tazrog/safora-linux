@@ -56,6 +56,8 @@ pub struct Client {
     pub floating: bool,
     pub fullscreen: bool,
     pub float_rect: Option<Rect>,
+    /// A floating dialog has been centered at the size it drew itself (done once, after its first frame).
+    pub dialog_sized: bool,
     /// The monitor area a fullscreen window covers (chosen when it went fullscreen).
     pub fs_rect: Option<Rect>,
     /// Where the tiling layout last put this window (used to spot windows too big for their tile).
@@ -385,6 +387,7 @@ impl SaforaState {
             floating,
             fullscreen: false,
             float_rect: None,
+            dialog_sized: false,
             fs_rect: None,
             asked_size: None,
             borders: std::array::from_fn(|_| SolidColorBuffer::new((0, 0), color)),
@@ -590,6 +593,44 @@ impl SaforaState {
     // ----------------------------------------------------------------- layout
 
     /// The output rectangle minus layer-shell exclusive zones, in global coordinates.
+    /// A window became a dialog (it got a parent after it was created, as GTK does): float it above
+    /// its parent instead of tiling it.
+    pub fn make_dialog(&mut self, surface: &WlSurface) {
+        let Some(idx) = self.client_index_for_surface(surface) else { return };
+        if self.clients[idx].floating || self.clients[idx].fullscreen {
+            return;
+        }
+        self.clients[idx].floating = true;
+        self.clients[idx].float_rect = None;
+        let id = self.clients[idx].id;
+        self.relayout();
+        self.focus_client(Some(id));
+    }
+
+    /// Center a floating dialog at the size it drew itself, once it has drawn its first frame
+    /// (instead of the generic 60 % floating size). Returns true if it was moved.
+    pub fn size_dialog_to_client(&mut self, idx: usize) -> bool {
+        let c = &self.clients[idx];
+        if !c.floating || c.fullscreen || c.dialog_sized || !c.window.toplevel().is_some_and(|t| t.parent().is_some()) {
+            return false;
+        }
+        let g = c.window.geometry().size;
+        let Some(area) = self.usable_area() else { return false };
+        if g.w <= 0 || g.h <= 0 {
+            return false;
+        }
+        let (w, h) = (g.w.min(area.size.w), g.h.min(area.size.h));
+        let rect = Rect::new(area.loc.x + (area.size.w - w) / 2, area.loc.y + (area.size.h - h) / 2, w, h);
+        let id = c.id;
+        self.clients[idx].float_rect = Some(rect);
+        self.clients[idx].dialog_sized = true;
+        self.relayout();
+        if let Some(window) = self.client_by_id(id).map(|c| c.window.clone()) {
+            self.space.raise_element(&window, false);
+        }
+        true
+    }
+
     pub fn usable_area(&self) -> Option<Rectangle<i32, Logical>> {
         let output = self.output.as_ref()?;
         let geo = self.space.output_geometry(output)?;

@@ -1,29 +1,43 @@
-# Safora Linux boot splash: logo, pulsing dots, and a styled disk-passphrase prompt.
+# Safora Linux boot splash: the desktop wallpaper with the logo, name and tagline (the same layout
+# as the GRUB menu), pulsing dots, and a styled disk-passphrase prompt.
+# Positions are designed for 1920x1080 and scaled to the screen.
 
-Window.SetBackgroundTopColor(0.07, 0.05, 0.12);
-Window.SetBackgroundBottomColor(0.14, 0.10, 0.22);
+Window.SetBackgroundTopColor(0.04, 0.03, 0.08);
+Window.SetBackgroundBottomColor(0.13, 0.09, 0.23);
 
 screen_w = Window.GetWidth();
 screen_h = Window.GetHeight();
+s = screen_h / 1080;
 
-logo_image = Image("logo.png");
-logo_sprite = Sprite(logo_image);
-logo_x = screen_w / 2 - logo_image.GetWidth() / 2;
-logo_y = screen_h * 0.36 - logo_image.GetHeight() / 2;
-logo_sprite.SetPosition(logo_x, logo_y, 10);
+# Wallpaper, scaled to cover the screen and centred.
+bg_image = Image("background.png");
+bg_scale = Math.Max(screen_w / bg_image.GetWidth(), screen_h / bg_image.GetHeight());
+bg_w = Math.Int(bg_image.GetWidth() * bg_scale + 1);
+bg_h = Math.Int(bg_image.GetHeight() * bg_scale + 1);
+bg_sprite = Sprite(bg_image.Scale(bg_w, bg_h));
+bg_sprite.SetPosition((screen_w - bg_w) / 2, (screen_h - bg_h) / 2, -100);
+
+fun place(file, center_y, height) {
+    img = Image(file);
+    w = img.GetWidth() * height / img.GetHeight();
+    img = img.Scale(Math.Int(w), Math.Int(height));
+    spr = Sprite(img);
+    spr.SetPosition(screen_w / 2 - w / 2, center_y - height / 2, 10);
+    return spr;
+}
+
+logo_sprite = place("logo.png", 250 * s, 210 * s);
+# name.png / tagline.png have their baseline at 78% of the image height.
+name_sprite = place("name.png", (450 - 0.28 * 96) * s, 96 * s);
+tagline_sprite = place("tagline.png", (500 - 0.28 * 44) * s, 44 * s);
 
 dot_image = Image("dot.png");
-dots_y = logo_y + logo_image.GetHeight() + 36;
+dots_y = 560 * s;
 for (i = 0; i < 3; i++) {
     dot[i] = Sprite(dot_image);
     dot[i].SetPosition(screen_w / 2 + (i - 1) * 30 - dot_image.GetWidth() / 2, dots_y, 10);
     dot[i].SetOpacity(0.3);
 }
-
-tagline_image = Image.Text("Simple by Nature, Private by default", 0.93, 0.91, 0.96, 1);
-tagline_sprite = Sprite(tagline_image);
-tagline_sprite.SetPosition(screen_w / 2 - tagline_image.GetWidth() / 2, dots_y + 44, 10);
-tagline_sprite.SetOpacity(0.8);
 
 frame = 0;
 fun refresh_callback() {
@@ -40,7 +54,7 @@ entry_image = Image("entry.png");
 bullet_image = Image("bullet.png");
 entry_sprite = Sprite(entry_image);
 entry_x = screen_w / 2 - entry_image.GetWidth() / 2;
-entry_y = screen_h * 0.70;
+entry_y = 690 * s;
 entry_sprite.SetPosition(entry_x, entry_y, 20);
 entry_sprite.SetOpacity(0);
 

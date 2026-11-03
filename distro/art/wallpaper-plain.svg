@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2560" height="1440" viewBox="0 0 2560 1440">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0b0814"/><stop offset="0.55" stop-color="#17102a"/><stop offset="1" stop-color="#21183a"/></linearGradient>
+    <radialGradient id="a" cx="0.75" cy="0.28" r="0.55"><stop offset="0" stop-color="#3dd6d0" stop-opacity="0.38"/><stop offset="1" stop-color="#3dd6d0" stop-opacity="0"/></radialGradient>
+    <radialGradient id="b" cx="0.15" cy="0.9" r="0.55"><stop offset="0" stop-color="#8a63d9" stop-opacity="0.30"/><stop offset="1" stop-color="#8a63d9" stop-opacity="0"/></radialGradient>
+    <linearGradient id="r1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7ff0ea" stop-opacity="0.16"/><stop offset="1" stop-color="#7ff0ea" stop-opacity="0.02"/></linearGradient>
+    <filter id="soft"><feGaussianBlur stdDeviation="1.5"/></filter>
+  </defs>
+  <rect width="2560" height="1440" fill="url(#bg)"/>
+  <rect width="2560" height="1440" fill="url(#a)"/>
+  <rect width="2560" height="1440" fill="url(#b)"/>
+  <g filter="url(#soft)">
+    <path d="M0 1010 L420 800 L760 960 L1180 700 L1620 930 L2020 740 L2560 980 L2560 1440 L0 1440 Z" fill="url(#r1)"/>
+    <path d="M0 1160 L520 960 L980 1130 L1500 930 L2040 1120 L2560 1000 L2560 1440 L0 1440 Z" fill="url(#r1)"/>
+    <path d="M0 1300 L640 1160 L1260 1290 L1900 1150 L2560 1260 L2560 1440 L0 1440 Z" fill="url(#r1)"/>
+  </g>
+  <g transform="translate(1280 640)" fill="none" stroke="#ece8f5" opacity="0.12">
+    <g transform="scale(330)"><path d="M0 -1 C0.55 -0.78 0.95 -0.72 1 -0.7 C1 0.05 0.7 0.65 0 1 C-0.7 0.65 -1 0.05 -1 -0.7 C-0.95 -0.72 -0.55 -0.78 0 -1 Z" stroke-width="0.006"/></g>
+    <g transform="scale(420)"><path d="M0 -1 C0.55 -0.78 0.95 -0.72 1 -0.7 C1 0.05 0.7 0.65 0 1 C-0.7 0.65 -1 0.05 -1 -0.7 C-0.95 -0.72 -0.55 -0.78 0 -1 Z" stroke-width="0.004"/></g>
+    <g transform="scale(520)"><path d="M0 -1 C0.55 -0.78 0.95 -0.72 1 -0.7 C1 0.05 0.7 0.65 0 1 C-0.7 0.65 -1 0.05 -1 -0.7 C-0.95 -0.72 -0.55 -0.78 0 -1 Z" stroke-width="0.003"/></g>
+  </g>
+</svg>

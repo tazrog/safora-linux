@@ -7,7 +7,12 @@ use std::process::Command;
 
 /// Run a command with a 4 second ceiling and return stdout on success.
 pub fn run(cmd: &str, args: &[&str]) -> Option<String> {
-    let out = Command::new("timeout").arg("4").arg(cmd).args(args).output().ok()?;
+    run_for(4, cmd, args)
+}
+
+/// Like [`run`], with a custom time limit in seconds.
+pub fn run_for(secs: u32, cmd: &str, args: &[&str]) -> Option<String> {
+    let out = Command::new("timeout").arg(secs.to_string()).arg(cmd).args(args).output().ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
@@ -226,12 +231,15 @@ pub fn parse_wifi(out: &str) -> Vec<WifiAp> {
     list
 }
 
-/// Visible networks. With `rescan` the adapter is asked to scan first (takes a few seconds).
+/// Visible networks. Without `rescan` this is NetworkManager's last scan (instant). With `rescan` the
+/// adapter scans first, which can take well over the usual 4-second limit on real hardware; if the
+/// scan still does not finish, the last known list is returned instead of nothing.
 pub fn read_wifi(rescan: bool) -> Vec<WifiAp> {
-    let rescan = if rescan { "yes" } else { "no" };
-    run("nmcli", &["-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list", "--rescan", rescan])
-        .map(|o| parse_wifi(&o))
-        .unwrap_or_default()
+    let list = |r: &str, secs| {
+        run_for(secs, "nmcli", &["-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list", "--rescan", r])
+    };
+    let out = if rescan { list("yes", 20).or_else(|| list("no", 4)) } else { list("no", 4) };
+    out.map(|o| parse_wifi(&o)).unwrap_or_default()
 }
 
 pub fn wifi_enabled() -> bool {
@@ -285,6 +293,122 @@ pub fn read_bt() -> Bt {
         .collect();
     Bt { available: true, powered, devices }
 }
+
+// ------------------------------------------------------------------ network use
+
+/// Total received and sent bytes from /proc/net/dev, for one interface or (empty `iface`) for every
+/// interface except loopback.
+pub fn parse_net_dev(text: &str, iface: &str) -> Option<(u64, u64)> {
+    let mut found = false;
+    let (mut rx, mut tx) = (0u64, 0u64);
+    for line in text.lines().skip(2) {
+        let Some((name, rest)) = line.split_once(':') else { continue };
+        let name = name.trim();
+        if (iface.is_empty() && name == "lo") || (!iface.is_empty() && name != iface) {
+            continue;
+        }
+        let f: Vec<u64> = rest.split_whitespace().filter_map(|v| v.parse().ok()).collect();
+        if f.len() >= 9 {
+            rx += f[0];
+            tx += f[8];
+            found = true;
+        }
+    }
+    found.then_some((rx, tx))
+}
+
+pub fn read_net_bytes(iface: &str) -> Option<(u64, u64)> {
+    parse_net_dev(&std::fs::read_to_string("/proc/net/dev").ok()?, iface)
+}
+
+/// Network interfaces except loopback (for the settings).
+pub fn net_interfaces() -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir("/sys/class/net")
+        .map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n != "lo").collect())
+        .unwrap_or_default();
+    v.sort();
+    v
+}
+
+/// A transfer rate, e.g. "1.2 MB/s" (or "9.6 Mb/s" with `bits`).
+pub fn human_rate(bytes_per_sec: f64, bits: bool) -> String {
+    let (mut v, unit) = if bits { (bytes_per_sec * 8.0, "b/s") } else { (bytes_per_sec, "B/s") };
+    for prefix in ["", "k", "M", "G"] {
+        if v < 1000.0 || prefix == "G" {
+            return if prefix.is_empty() || v >= 100.0 { format!("{v:.0} {prefix}{unit}") } else { format!("{v:.1} {prefix}{unit}") };
+        }
+        v /= 1000.0;
+    }
+    unreachable!()
+}
+
+// ------------------------------------------------------------------ temperature
+
+/// CPU temperature in °C: the package sensor of coretemp / k10temp / zenpower, else a thermal zone.
+pub fn read_cpu_temp() -> Option<f64> {
+    let milli = |p: std::path::PathBuf| std::fs::read_to_string(p).ok()?.trim().parse::<f64>().ok().map(|v| v / 1000.0);
+    if let Ok(dir) = std::fs::read_dir("/sys/class/hwmon") {
+        let mut hw: Vec<_> = dir.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+        hw.sort();
+        for want in ["coretemp", "k10temp", "zenpower", "cpu_thermal", "acpitz"] {
+            for h in &hw {
+                if std::fs::read_to_string(h.join("name")).is_ok_and(|n| n.trim() == want) {
+                    if let Some(t) = milli(h.join("temp1_input")) {
+                        return Some(t);
+                    }
+                }
+            }
+        }
+    }
+    let zones: Vec<_> = std::fs::read_dir("/sys/class/thermal").ok()?.filter_map(|e| e.ok()).map(|e| e.path())
+        .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("thermal_zone"))).collect();
+    let pick = zones.iter().find(|z| std::fs::read_to_string(z.join("type")).is_ok_and(|t| t.trim() == "x86_pkg_temp")).or(zones.first())?;
+    milli(pick.join("temp"))
+}
+
+// ---------------------------------------------------------------------- battery
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Battery {
+    pub percent: u32,
+    pub charging: bool,
+    pub full: bool,
+    /// Minutes until empty (discharging) or full (charging), when the hardware reports it.
+    pub minutes: Option<u32>,
+}
+
+/// Parse a power_supply `uevent` file.
+pub fn parse_battery(uevent: &str) -> Option<Battery> {
+    let get = |k: &str| uevent.lines().find_map(|l| l.strip_prefix(&format!("POWER_SUPPLY_{k}=")).map(str::trim));
+    let num = |k: &str| get(k).and_then(|v| v.parse::<f64>().ok());
+    let percent = num("CAPACITY")? as u32;
+    let status = get("STATUS").unwrap_or("Unknown");
+    let charging = status == "Charging";
+    // Energy (µWh / µW) or charge (µAh / µA) pairs, depending on the hardware.
+    let (now, full, rate) = match (num("ENERGY_NOW"), num("ENERGY_FULL"), num("POWER_NOW")) {
+        (Some(n), Some(f), r) => (Some(n), Some(f), r),
+        _ => (num("CHARGE_NOW"), num("CHARGE_FULL"), num("CURRENT_NOW")),
+    };
+    let minutes = match (now, full, rate) {
+        (Some(n), Some(f), Some(r)) if r > 0.0 => Some(((if charging { f - n } else { n } / r) * 60.0).max(0.0) as u32),
+        _ => None,
+    };
+    Some(Battery { percent: percent.min(100), charging, full: status == "Full", minutes })
+}
+
+pub fn read_battery() -> Option<Battery> {
+    let dir = std::fs::read_dir("/sys/class/power_supply").ok()?;
+    for e in dir.filter_map(|e| e.ok()) {
+        let p = e.path();
+        if std::fs::read_to_string(p.join("type")).is_ok_and(|t| t.trim() == "Battery") {
+            if let Some(b) = std::fs::read_to_string(p.join("uevent")).ok().and_then(|u| parse_battery(&u)) {
+                return Some(b);
+            }
+        }
+    }
+    None
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -360,6 +484,26 @@ mod tests {
         let aps = parse_wifi(out);
         assert_eq!(aps.len(), 2);
         assert!(aps[0].in_use && aps[0].ssid == "Home");
+    }
+
+    #[test]
+    fn net_dev() {
+        let t = "Inter-|   Receive |  Transmit\n face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n    lo: 500 5 0 0 0 0 0 0 500 5 0 0 0 0 0 0\n  wlan0: 1000 10 0 0 0 0 0 0 2000 20 0 0 0 0 0 0\n  eth0: 30 1 0 0 0 0 0 0 40 1 0 0 0 0 0 0\n";
+        assert_eq!(parse_net_dev(t, ""), Some((1030, 2040)));
+        assert_eq!(parse_net_dev(t, "wlan0"), Some((1000, 2000)));
+        assert_eq!(parse_net_dev(t, "nope"), None);
+        assert_eq!(human_rate(512.0, false), "512 B/s");
+        assert_eq!(human_rate(1500.0, false), "1.5 kB/s");
+        assert_eq!(human_rate(1_250_000.0, true), "10.0 Mb/s");
+    }
+
+    #[test]
+    fn battery() {
+        let u = "POWER_SUPPLY_STATUS=Discharging\nPOWER_SUPPLY_CAPACITY=50\nPOWER_SUPPLY_ENERGY_NOW=20000000\nPOWER_SUPPLY_ENERGY_FULL=40000000\nPOWER_SUPPLY_POWER_NOW=10000000\n";
+        assert_eq!(parse_battery(u), Some(Battery { percent: 50, charging: false, full: false, minutes: Some(120) }));
+        let c = "POWER_SUPPLY_STATUS=Charging\nPOWER_SUPPLY_CAPACITY=75\nPOWER_SUPPLY_CHARGE_NOW=3000\nPOWER_SUPPLY_CHARGE_FULL=4000\nPOWER_SUPPLY_CURRENT_NOW=2000\n";
+        assert_eq!(parse_battery(c).unwrap().minutes, Some(30));
+        assert_eq!(parse_battery("POWER_SUPPLY_STATUS=Full\n"), None);
     }
 }
 
