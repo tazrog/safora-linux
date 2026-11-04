@@ -134,19 +134,27 @@ pub fn default_bindings(cfg: &Config) -> Vec<Binding> {
         specs.retain(|(dk, _)| !dk.eq_ignore_ascii_case(k));
         specs.push((k.clone(), v.clone()));
     }
-    specs
-        .into_iter()
-        .filter_map(|(k, v)| {
-            let action = Action::parse(&v).or_else(|| {
-                tracing::warn!("keybind {k}: unknown action `{v}`");
-                None
-            })?;
-            Binding::parse(&k, m, action).or_else(|| {
-                tracing::warn!("keybind `{k}` could not be parsed");
-                None
-            })
-        })
-        .collect()
+    let mut out: Vec<Binding> = Vec::new();
+    for (k, v) in specs {
+        let Some(action) = Action::parse(&v) else {
+            tracing::warn!("keybind {k}: unknown action `{v}`");
+            continue;
+        };
+        let Some(b) = Binding::parse(&k, m, action) else {
+            tracing::warn!("keybind `{k}` could not be parsed");
+            continue;
+        };
+        // A later binding on the same keys wins, however it is spelled ("Super+Return" vs "Mod+Return").
+        out.retain(|o| !o.same_keys(&b));
+        out.push(b);
+    }
+    out
+}
+
+impl Binding {
+    fn same_keys(&self, o: &Binding) -> bool {
+        self.sym == o.sym && self.logo == o.logo && self.alt == o.alt && self.ctrl == o.ctrl && self.shift == o.shift
+    }
 }
 
 impl SaforaState {
@@ -388,5 +396,15 @@ mod tests {
         let binds = default_bindings(&Config::default());
         assert!(binds.iter().any(|b| b.action == Action::Workspace(8)));
         assert!(binds.iter().any(|b| b.action == Action::MoveToWorkspace(0)));
+    }
+
+    #[test]
+    fn user_binding_overrides_default_spelled_differently() {
+        let mut cfg = Config::default();
+        cfg.keybinds.insert("Super+RETURN".into(), "spawn:foot".into());
+        let binds = default_bindings(&cfg);
+        let ret: Vec<_> = binds.iter().filter(|b| b.logo && !b.shift && b.sym == Keysym::Return).collect();
+        assert_eq!(ret.len(), 1);
+        assert_eq!(ret[0].action, Action::Spawn("foot".into()));
     }
 }

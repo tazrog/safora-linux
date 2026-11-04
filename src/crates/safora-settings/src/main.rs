@@ -58,6 +58,7 @@ fn apply_theme(c: &mut Config, t: &Theme) {
     c.colors.border_inactive = t.border_inactive.into();
 }
 
+mod keys;
 mod more;
 mod widgets;
 
@@ -99,7 +100,7 @@ fn main() -> glib::ExitCode {
         add_page(&stack, "time", "Date & time", more::datetime_page(&ctx));
         add_page(&stack, "language", "Language", more::language_page());
         add_page(&stack, "access", "Accessibility", more::access_page(&ctx));
-        add_page(&stack, "keys", "Shortcuts", keys_page());
+        add_page(&stack, "keys", "Shortcuts", keys::keys_page(&ctx));
         add_page(&stack, "accounts", "Accounts", more::accounts_page());
 
         if let Ok(page) = std::env::var("SAFORA_SETTINGS_PAGE") {
@@ -402,49 +403,6 @@ fn apps_page(ctx: &Rc<Ctx>) -> gtk::Box {
     frame.set_child(Some(&view));
     view.set_height_request(140);
     p.append(&frame);
-    p
-}
-
-fn keys_page() -> gtk::Box {
-    let p = page();
-    p.append(&heading("Default shortcuts"));
-    let m = "Mod";
-    let rows = [
-        (format!("{m} + Enter"), "Open terminal"),
-        (format!("{m} + D"), "Application launcher"),
-        (format!("{m} + Q"), "Close window"),
-        (format!("{m} + F"), "Fullscreen"),
-        (format!("{m} + Shift + Space"), "Float / tile window"),
-        (format!("{m} + Space"), "Change tiling layout"),
-        (format!("{m} + J / K  ·  {m} + Tab"), "Focus next / previous window"),
-        (format!("{m} + Shift + J / K"), "Move window within the layout"),
-        (format!("{m} + 1 … 9"), "Go to workspace"),
-        (format!("{m} + Shift + 1 … 9"), "Send window to workspace"),
-        (format!("{m} + S"), "Open these settings"),
-        (format!("{m} + Shift + R"), "Reload configuration"),
-        (format!("{m} + Shift + E"), "Log out"),
-        ("Ctrl + Alt + F1…F6".to_string(), "Switch virtual terminal"),
-    ];
-    let grid = gtk::Grid::new();
-    grid.set_column_spacing(24);
-    grid.set_row_spacing(8);
-    for (i, (k, d)) in rows.iter().enumerate() {
-        let kl = gtk::Label::new(Some(k));
-        kl.set_xalign(0.0);
-        kl.add_css_class("monospace");
-        let dl = gtk::Label::new(Some(d));
-        dl.set_xalign(0.0);
-        grid.attach(&kl, 0, i as i32, 1, 1);
-        grid.attach(&dl, 1, i as i32, 1, 1);
-    }
-    p.append(&grid);
-    let note = gtk::Label::new(Some(
-        "“Mod” is Super (the Windows key) unless changed in Windows → Shortcut modifier.\nCustom shortcuts can be added under [keybinds] in ~/.config/safora/config.toml.",
-    ));
-    note.set_xalign(0.0);
-    note.set_wrap(true);
-    note.set_margin_top(10);
-    p.append(&note);
     p
 }
 

@@ -311,6 +311,13 @@ impl WlrLayerShellHandler for SaforaState {
         self.keep_lock_screen_alive();
     }
 
+    // GTK layer-shell clients (the bar's menus) create the xdg_popup with no parent and attach it
+    // to the layer surface afterwards, so `XdgShellHandler::new_popup` could not place it yet:
+    // without this, a menu opened near the screen edge spills off-screen.
+    fn new_popup(&mut self, _parent: LayerSurface, popup: PopupSurface) {
+        self.unconstrain_popup(&popup);
+    }
+
     fn layer_destroyed(&mut self, surface: LayerSurface) {
         let wl = surface.wl_surface().clone();
         for output in self.outputs.clone() {

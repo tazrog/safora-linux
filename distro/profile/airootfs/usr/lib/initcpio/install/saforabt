@@ -16,7 +16,7 @@ build() {
     # them a Bluetooth LE keyboard can connect but its encrypted HID channel never comes up.
     for m in bluetooth btusb btintel btbcm btrtl btmtk btmtksdio hci_uart hidp uhid hid-generic evdev \
              cmac ccm aes_generic aesni_intel ecdh_generic ecc rfkill; do
-        add_module "$m" 2>/dev/null || true
+        add_module "$m?"   # "?" = optional: skip quietly if this kernel lacks it or has it built in
     done
     # Vendor HID drivers (Logitech, Apple, Microsoft, ...), so keyboards that need them work too.
     add_checked_modules '/drivers/hid/' 2>/dev/null || true
@@ -24,6 +24,12 @@ build() {
     add_binary /usr/lib/bluetooth/bluetoothd
     add_binary /usr/bin/bluetoothctl
     add_binary /usr/bin/dbus-daemon
+
+    # dbus-daemon looks up each client's account; with no /etc/passwd and /etc/group (the busybox
+    # initramfs has neither) it drops every connection, so bluetoothd can't start and the keyboard
+    # never connects. Provide just the root account (no host accounts end up on /boot).
+    grep -qs '^root:' "$BUILDROOT/etc/passwd" || printf 'root:x:0:0:root:/root:/bin/sh\n' >> "$BUILDROOT/etc/passwd"
+    grep -qs '^root:' "$BUILDROOT/etc/group" || printf 'root:x:0:\n' >> "$BUILDROOT/etc/group"
 
     # udev must label the new input device as a keyboard (ID_INPUT_KEYBOARD) or plymouth's password
     # prompt won't listen to it.
