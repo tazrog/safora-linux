@@ -23,6 +23,7 @@ pub const ALL_WIDGETS: &[(&str, &str)] = &[
     ("temperature", "CPU temperature"),
     ("battery", "Battery"),
     ("weather", "Weather"),
+    ("claude", "Claude Code usage"),
     ("tray", "App tray"),
     ("spacer", "Spacer"),
     ("separator", "Separator"),

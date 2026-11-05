@@ -28,6 +28,7 @@ pub fn build(name: &str, ctx: &Rc<Ctx>) -> Option<gtk::Widget> {
         "temperature" => extra::temperature(ctx, &o),
         "battery" => extra::battery(&o),
         "weather" => extra::weather(&o),
+        "claude" => extra::claude(ctx, &o),
         "tray" => extra::tray(&o),
         "spacer" => extra::spacer(&o),
         "separator" => extra::separator(),

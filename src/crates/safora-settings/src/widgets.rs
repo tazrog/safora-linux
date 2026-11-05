@@ -6,6 +6,7 @@ use std::rc::Rc;
 use gtk4 as gtk;
 use gtk::{gio, glib, prelude::*};
 use safora_common::{
+    claude,
     config::{clock_pattern, widget_kind, widget_title, Config, WidgetOpts, ALL_WIDGETS, DEFAULT_TRAY, REPEATABLE},
     sys,
 };
@@ -85,7 +86,7 @@ fn refill(ctx: &Rc<Ctx>, list: &gtk::Box) {
 fn has_settings(kind: &str) -> bool {
     matches!(
         kind,
-        "clock" | "cpu" | "ram" | "disk" | "temperature" | "netspeed" | "network" | "audio" | "bluetooth" | "battery" | "weather" | "tray" | "spacer"
+        "clock" | "cpu" | "ram" | "disk" | "temperature" | "netspeed" | "network" | "audio" | "bluetooth" | "battery" | "weather" | "claude" | "tray" | "spacer"
     )
 }
 
@@ -177,6 +178,7 @@ fn fill_widget_rows(ctx: &Rc<Ctx>, list: &gtk::Box) {
             r.append(&rm);
         } else {
             let always_on = kind == "workspaces";
+            let is_claude = kind == "claude";
             let sw = switch(place.is_some(), {
                 let (ctx, list, name) = (ctx.clone(), list.clone(), name.clone());
                 move |on| {
@@ -192,6 +194,11 @@ fn fill_widget_rows(ctx: &Rc<Ctx>, list: &gtk::Box) {
                             c.bar.remove(&name);
                         }
                     });
+                    // The Claude widget needs Claude Code to report to it; set that up unless the
+                    // user already has a status line of their own (the gear page offers to replace it).
+                    if on && is_claude {
+                        let _ = claude::connect(false);
+                    }
                     refill(&ctx, &list);
                 }
             });
@@ -312,6 +319,7 @@ fn open_settings(ctx: &Rc<Ctx>, name: &str, from: &impl IsA<gtk::Widget>) {
             body.append(&note("The battery widget hides itself on computers without a battery."));
         }
         "weather" => weather_settings(ctx, name, &o, &body),
+        "claude" => claude_settings(ctx, name, &o, &body),
         "tray" => tray_settings(ctx, name, &o, &body),
         "spacer" => {
             body.append(&number(ctx, name, "Width (pixels)", 0.0, 400.0, o.width, 16, |o| &mut o.width));
@@ -571,6 +579,84 @@ fn weather_settings(ctx: &Rc<Ctx>, name: &str, o: &WidgetOpts, body: &gtk::Box) 
     body.append(&note(
         "Privacy: the forecast comes from open-meteo.com (no account or key). Only the place you type is sent, \
          and the service sees your IP address like any website. Nothing is contacted while this widget is off.",
+    ));
+}
+
+fn claude_settings(ctx: &Rc<Ctx>, name: &str, o: &WidgetOpts, body: &gtk::Box) {
+    body.append(&note(
+        "Shows how much of your Claude plan's 5-hour session and weekly limits you have used. \
+         Click the widget for both limits, their reset times and a Refresh button.",
+    ));
+    body.append(&choice(
+        ctx,
+        name,
+        "Show",
+        &[("", "5-hour and weekly usage"), ("five-hour", "5-hour usage only"), ("week", "Weekly usage only")],
+        &o.format,
+        |o| &mut o.format,
+        |_| {},
+    ));
+    let current = if o.display.is_empty() { "text" } else { o.display.as_str() };
+    let width = number(ctx, name, "Meter width (pixels)", 20.0, 240.0, o.width, 36, |o| &mut o.width);
+    width.set_visible(current == "meter");
+    let w2 = width.clone();
+    body.append(&choice(ctx, name, "Display", &[("text", "Percentages"), ("meter", "Meters and percentages")], current, |o| &mut o.display, move |d| {
+        w2.set_visible(d == "meter")
+    }));
+    body.append(&width);
+    body.append(&row(
+        "Show the ✻ symbol",
+        &switch(!o.hide_label, {
+            let (ctx, name) = (ctx.clone(), name.to_string());
+            move |on| set_opt(&ctx, &name, |o| o.hide_label = !on)
+        }),
+    ));
+    body.append(&number(ctx, name, "Check every (seconds)", 2.0, 300.0, o.interval, 10, |o| &mut o.interval));
+
+    // Connection to Claude Code (its status-line setting).
+    body.append(&heading("Claude Code"));
+    let status = note("");
+    let button = gtk::Button::new();
+    button.set_halign(gtk::Align::Start);
+    let show_state = {
+        let (status, button) = (status.clone(), button.clone());
+        Rc::new(move |err: Option<String>| {
+            let path = claude::settings_path().display().to_string();
+            let (text, btn) = match claude::hook() {
+                claude::Hook::Connected => (format!("Connected: Claude Code reports its usage to the bar ({path})."), Some("Disconnect")),
+                claude::Hook::Missing => ("Not connected: Claude Code doesn't report its usage to the bar yet.".to_string(), Some("Connect Claude Code")),
+                claude::Hook::Other(cmd) => (
+                    format!("Claude Code already runs its own status line ({cmd}). Connecting replaces it with Safora's."),
+                    Some("Replace and connect"),
+                ),
+                claude::Hook::Unreadable => (format!("{path} is not valid JSON, so Safora leaves it alone. Fix it, then come back here."), None),
+            };
+            status.set_text(&match err {
+                Some(e) => format!("{text}\n{e}"),
+                None => text,
+            });
+            button.set_visible(btn.is_some());
+            button.set_label(btn.unwrap_or_default());
+        })
+    };
+    show_state(None);
+    {
+        let show_state = show_state.clone();
+        button.connect_clicked(move |_| {
+            let r = match claude::hook() {
+                claude::Hook::Connected => claude::disconnect(),
+                claude::Hook::Other(_) => claude::connect(true),
+                _ => claude::connect(false),
+            };
+            show_state(r.err());
+        });
+    }
+    body.append(&status);
+    body.append(&button);
+    body.append(&note(
+        "Privacy: no API and no network access. Claude Code passes its own usage figures to its status-line \
+         command (saforactl claude-status), which keeps them in memory under /run/user until you log out. \
+         The widget only updates while claude is running in a terminal; otherwise it shows the last values, dimmed.",
     ));
 }
 

@@ -1,5 +1,6 @@
 //! Shared types for the Safora desktop: configuration and the compositor IPC protocol.
 
+pub mod claude;
 pub mod config;
 pub mod fonts;
 pub mod ipc;

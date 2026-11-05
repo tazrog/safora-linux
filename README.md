@@ -35,13 +35,21 @@ before putting it on real hardware, and keep your data backed up.
   (Wi-Fi list, join, passwords), Bluetooth (power, connect/disconnect paired devices), audio
   (PulseAudio volume, mute, output device; scroll to change), power menu (log out / suspend / restart / shut down).
   Optional widgets: **network use** (download/upload rate), **CPU temperature**, **battery** (hides itself on desktops),
-  **weather** (off by default; asks open-meteo.com for the place you type, nothing else), **app tray** (one-click launchers),
+  **weather** (off by default; asks open-meteo.com for the place you type, nothing else),
+  **Claude Code usage** (off by default; 5-hour and weekly plan usage, see below), **app tray** (one-click launchers),
   and any number of **spacers** and **separators** to group widgets.
 * **Widget settings**: every widget with options has a gear button in *Safora Settings → Widgets*. Number widgets
   (CPU, RAM, disk, temperature, network use) can be shown as text, a scrolling graph, a meter or an icon, with their own
   format (e.g. RAM used / percentage / used of total), units, drive or connection and update interval. The clock has
   format presets, a custom pattern and a live preview; network, audio, Bluetooth and battery can be icon-only.
   Settings are stored per widget as `[bar.widget.<name>]` in `~/.config/safora/config.toml`.
+* **Claude Code usage widget**: shows how much of your Claude plan's 5-hour session and weekly limit is used (e.g. `✻ 5h 42% · wk 18%`);
+  click it for both limits with meters, their reset times and a Refresh button. It uses no API and makes no network
+  connection: Claude Code passes its own usage figures to its status-line command, `saforactl claude-status`, which keeps
+  them in `/run/user/<uid>/safora/claude-usage.json` (memory only, gone at logout). Switching the widget on (or *Connect
+  Claude Code* in its settings) adds that status line to `~/.claude/settings.json`; an existing status line of your own is
+  only replaced if you confirm. The widget refreshes only while `claude` is running in a terminal; otherwise it shows the
+  last values, dimmed. `saforactl claude-connect` / `claude-disconnect` do the same from a shell.
 * **Wallpapers**: three included Safora wallpapers (default, dawn, aurora) or any PNG/JPEG/WebP via *Safora Settings → Wallpaper* (fill/fit/stretch/centre).
 * **Looks & layout**: six theme presets, bar position/height/margin/radius/opacity/font/colors, gaps,
   borders, tiling mode, master ratio, desktop and border colors, keyboard layout, startup programs.

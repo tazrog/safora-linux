@@ -1,4 +1,4 @@
-//! Optional bar widgets (network use, temperature, battery, weather, app tray, spacer, separator) and
+//! Optional bar widgets (network use, temperature, battery, weather, Claude Code usage, app tray, spacer, separator) and
 //! the shared "metric" display used by every number widget: plain text, a scrolling graph, a meter
 //! or an icon, chosen per widget in Safora Settings → Widgets.
 
@@ -466,6 +466,261 @@ pub fn weather(o: &WidgetOpts) -> gtk::Widget {
         let apply = apply.clone();
         once(work.clone(), move |w| apply(w));
     });
+    menu_button(&content, &pop).upcast()
+}
+
+// ------------------------------------------------------------- Claude Code usage
+
+/// Local reset time: "today 18:30", "tomorrow 09:00" or "Mon 09 Nov 09:00".
+fn reset_clock(t: i64, h24: bool) -> String {
+    let Ok(at) = glib::DateTime::from_unix_local(t) else { return String::new() };
+    let time = at.format(if h24 { "%H:%M" } else { "%I:%M %p" }).map(|s| s.to_string()).unwrap_or_default();
+    let today = glib::DateTime::now_local().ok().map(|n| (n.year(), n.day_of_year()));
+    let day = (at.year(), at.day_of_year());
+    match today {
+        Some(d) if d == day => format!("today {time}"),
+        Some((y, n)) if (y, n + 1) == day || (day.1 == 1 && y + 1 == day.0 && n >= 365) => format!("tomorrow {time}"),
+        _ => format!("{} {time}", at.format("%a %d %b").map(|s| s.to_string()).unwrap_or_default()),
+    }
+}
+
+fn usage_level(pct: f64) -> &'static str {
+    if pct >= 90.0 { "crit" } else if pct >= 75.0 { "warn" } else { "" }
+}
+
+/// One window in the Claude popover: name, percentage, meter and reset time.
+struct UsageRow {
+    pct: gtk::Label,
+    meter: gtk::LevelBar,
+    reset: gtk::Label,
+}
+
+fn usage_row(body: &gtk::Box, name: &str) -> UsageRow {
+    let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let n = title(name);
+    n.set_hexpand(true);
+    head.append(&n);
+    let pct = label("–");
+    head.append(&pct);
+    body.append(&head);
+    let meter = meter(260);
+    meter.set_hexpand(true);
+    body.append(&meter);
+    let reset = label("");
+    reset.add_css_class("muted");
+    body.append(&reset);
+    UsageRow { pct, meter, reset }
+}
+
+/// What a background check of Claude Code found.
+struct ClaudeCheck {
+    running: bool,
+    usage: Option<safora_common::claude::Usage>,
+    hook: safora_common::claude::Hook,
+}
+
+fn check_claude(force_read: bool) -> ClaudeCheck {
+    use safora_common::claude;
+    let running = claude::running();
+    // Only read Claude Code's numbers while it runs (or once when the bar starts).
+    let usage = if running || force_read { claude::load() } else { None };
+    ClaudeCheck { running, usage, hook: claude::hook() }
+}
+
+pub fn claude(ctx: &Rc<Ctx>, o: &WidgetOpts) -> gtk::Widget {
+    use safora_common::claude::{self, Hook, Usage, Window};
+
+    let h24 = ctx.config.bar.clock_24h;
+    let show = o.format.clone();
+    let meters = o.display == "meter";
+    let width = if o.width > 0 { o.width as i32 } else { 36 };
+
+    // Bar: ✻ 5h 42% · wk 18%   (or small meters).
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+    content.add_css_class("metric");
+    if !o.hide_label {
+        content.append(&gtk::Label::new(Some("✻")));
+    }
+    let mut bar_parts: Vec<(&'static str, gtk::Label, Option<gtk::LevelBar>)> = Vec::new();
+    for (key, short) in [("five-hour", "5h"), ("week", "wk")] {
+        if !show.is_empty() && show != key {
+            continue;
+        }
+        if !bar_parts.is_empty() && !meters {
+            let dot = gtk::Label::new(Some("·"));
+            dot.add_css_class("muted");
+            content.append(&dot);
+        }
+        let name = gtk::Label::new(Some(short));
+        name.add_css_class("muted");
+        content.append(&name);
+        let m = meters.then(|| meter(width));
+        if let Some(m) = &m {
+            content.append(m);
+        }
+        let value = gtk::Label::new(Some("–"));
+        content.append(&value);
+        bar_parts.push((key, value, m));
+    }
+
+    // Popover.
+    let (pop, body) = popover_box();
+    body.set_width_request(280);
+    body.append(&title("Claude Code usage"));
+    let five = usage_row(&body, "Current session (5 hours)");
+    let week = usage_row(&body, "Current week");
+    let status = label("");
+    status.set_wrap(true);
+    status.set_max_width_chars(36);
+    status.add_css_class("muted");
+    body.append(&status);
+    let hook_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let hook_note = label("");
+    hook_note.set_wrap(true);
+    hook_note.set_max_width_chars(36);
+    let connect = gtk::Button::with_label("Connect Claude Code");
+    hook_box.append(&hook_note);
+    hook_box.append(&connect);
+    hook_box.set_visible(false);
+    body.append(&hook_box);
+    let refresh_btn = gtk::Button::with_label("Refresh");
+    body.append(&refresh_btn);
+
+    let last: Rc<RefCell<Option<Usage>>> = Rc::new(RefCell::new(None));
+    let running = Rc::new(Cell::new(false));
+    let refreshed_by_hand = Rc::new(Cell::new(false));
+
+    let render = {
+        let (content, status, hook_box, hook_note, connect) = (content.clone(), status.clone(), hook_box.clone(), hook_note.clone(), connect.clone());
+        let (last, running, by_hand) = (last.clone(), running.clone(), refreshed_by_hand.clone());
+        Rc::new(move |hook: Option<Hook>| {
+            let now = claude::now();
+            let u = last.borrow().clone();
+            let is_running = running.get();
+            let win = |key: &str| u.as_ref().and_then(|u| if key == "week" { u.seven_day } else { u.five_hour });
+            let mut tip = Vec::new();
+            for (key, value, m) in &bar_parts {
+                match win(key) {
+                    Some(w) => {
+                        let p = w.used_now(now);
+                        value.set_text(&format!("{p:.0}%"));
+                        set_level(value, usage_level(p));
+                        if let Some(m) = m {
+                            m.set_value(p / 100.0);
+                        }
+                    }
+                    None => {
+                        value.set_text("–");
+                        set_level(value, "");
+                        if let Some(m) = m {
+                            m.set_value(0.0);
+                        }
+                    }
+                }
+            }
+            let mut fill = |row: &UsageRow, w: Option<Window>, name: &str| match w {
+                Some(w) => {
+                    let p = w.used_now(now);
+                    row.pct.set_text(&format!("{p:.0}% used"));
+                    set_level(&row.pct, usage_level(p));
+                    row.meter.set_value(p / 100.0);
+                    let when = match w.resets_at {
+                        Some(t) if t > now => format!("Resets in {} ({})", claude::span(t - now), reset_clock(t, h24)),
+                        Some(t) => format!("Reset {} — waiting for Claude Code's next update", reset_clock(t, h24)),
+                        None => "Reset time not reported".to_string(),
+                    };
+                    row.reset.set_text(&when);
+                    tip.push(format!("{name}: {p:.0}% used — {}", when.to_lowercase()));
+                }
+                None => {
+                    row.pct.set_text("–");
+                    set_level(&row.pct, "");
+                    row.meter.set_value(0.0);
+                    row.reset.set_text("");
+                }
+            };
+            fill(&five, win("five-hour"), "5-hour session");
+            fill(&week, win("week"), "Week");
+
+            let msg = match &u {
+                None if is_running => "Claude Code is running; the numbers appear after its next reply.".to_string(),
+                None => "No usage yet. Start  claude  in a terminal; the numbers update while it runs.".to_string(),
+                Some(u) if !u.available => "Claude Code reports no plan limits for this login (API key or cloud provider).".to_string(),
+                Some(u) => {
+                    let model = if u.model.is_empty() { String::new() } else { format!(" ({})", u.model) };
+                    if is_running {
+                        format!("Updated {} ago by Claude Code{model}.", claude::span(now - u.updated))
+                    } else {
+                        format!("Claude Code is not running, so this is not refreshed. Last update {} ago.", claude::span(now - u.updated))
+                    }
+                }
+            };
+            let msg = if by_hand.replace(false) && !is_running { format!("Nothing to refresh: Claude Code is not running in a terminal. {msg}") } else { msg };
+            status.set_text(&msg);
+            content.set_opacity(if is_running { 1.0 } else { 0.6 });
+            tip.push(if is_running { "Claude Code is running".into() } else { "Claude Code is not running (not refreshed)".into() });
+            content.set_tooltip_text(Some(&format!("Claude Code usage\n{}", tip.join("\n"))));
+
+            if let Some(hook) = hook {
+                let text = match &hook {
+                    Hook::Connected => None,
+                    Hook::Missing => Some("Claude Code isn't reporting to the bar yet.".to_string()),
+                    Hook::Other(cmd) => Some(format!("Claude Code already uses its own status line ({cmd}). Connecting replaces it.")),
+                    Hook::Unreadable => Some(format!("{} is not valid JSON, so Safora leaves it alone.", claude::settings_path().display())),
+                };
+                hook_box.set_visible(text.is_some());
+                connect.set_visible(hook != Hook::Unreadable);
+                hook_note.set_text(&text.unwrap_or_default());
+            }
+        })
+    };
+
+    let apply = {
+        let (render, last, running) = (render.clone(), last.clone(), running.clone());
+        Rc::new(move |c: ClaudeCheck| {
+            running.set(c.running);
+            if let Some(u) = c.usage {
+                *last.borrow_mut() = Some(u);
+            }
+            render(Some(c.hook));
+        })
+    };
+
+    let first = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let secs = if o.interval > 0 { o.interval } else { 10 };
+    {
+        let apply = apply.clone();
+        poll(&content, secs as u64 * 1000, move || check_claude(first.swap(false, std::sync::atomic::Ordering::Relaxed)), move |c| apply(c));
+    }
+    {
+        let apply = apply.clone();
+        let by_hand = refreshed_by_hand.clone();
+        refresh_btn.connect_clicked(move |_| {
+            by_hand.set(true);
+            let apply = apply.clone();
+            once(|| check_claude(false), move |c| apply(c));
+        });
+    }
+    {
+        let apply = apply.clone();
+        connect.connect_clicked(move |b| {
+            let replace = matches!(claude::hook(), Hook::Other(_));
+            if let Err(e) = claude::connect(replace) {
+                b.set_tooltip_text(Some(&e));
+                eprintln!("safora-bar: {e}");
+            }
+            let apply = apply.clone();
+            once(|| check_claude(false), move |c| apply(c));
+        });
+    }
+    // Reset countdowns are recomputed each time the popover opens.
+    {
+        let apply = apply.clone();
+        pop.connect_show(move |_| {
+            let apply = apply.clone();
+            once(|| check_claude(false), move |c| apply(c));
+        });
+    }
     menu_button(&content, &pop).upcast()
 }
 

@@ -20,7 +20,12 @@ const USAGE: &str = "usage: saforactl <command>
   lock                  lock the screen
   reload                re-read ~/.config/safora/config.toml
   screenshot FILE.png   save the screen (nested/dev mode only)
-  quit                  end the session";
+  quit                  end the session
+
+  claude-status         Claude Code status-line command: reads Claude Code's JSON on stdin and
+                        keeps its 5-hour / weekly usage for the bar's Claude widget
+  claude-connect [--replace]   make Claude Code report its usage to the bar
+  claude-disconnect     undo claude-connect";
 
 fn parse(args: &[String]) -> Result<Request, String> {
     let n = |i: usize| -> Result<usize, String> {
@@ -48,8 +53,54 @@ fn parse(args: &[String]) -> Result<Request, String> {
     })
 }
 
+/// `saforactl claude-*`: talks to Claude Code's files, not to the compositor.
+fn claude(args: &[String]) -> i32 {
+    use safora_common::claude;
+    match args[0].as_str() {
+        "claude-status" => {
+            let mut input = String::new();
+            let _ = std::io::Read::read_to_string(&mut std::io::stdin().lock(), &mut input);
+            let v: serde_json::Value = serde_json::from_str(&input).unwrap_or_default();
+            let now = claude::now();
+            let usage = claude::from_statusline(&v, now);
+            // Keep the last good numbers if this update carried none (e.g. before the first reply).
+            let shown = match claude::load() {
+                Some(old) if !usage.available && old.available => claude::Usage { model: usage.model.clone(), ..old },
+                _ => {
+                    if let Err(e) = claude::save(&usage) {
+                        eprintln!("saforactl: cannot store Claude usage: {e}");
+                    }
+                    usage
+                }
+            };
+            println!("{}", claude::status_text(&shown, now));
+            0
+        }
+        "claude-connect" => match claude::connect(args.get(1).is_some_and(|a| a == "--replace")) {
+            Ok(()) => {
+                println!("Claude Code now reports its usage to the Safora bar ({}).", claude::settings_path().display());
+                0
+            }
+            Err(e) => {
+                eprintln!("saforactl: {e}");
+                1
+            }
+        },
+        _ => match claude::disconnect() {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("saforactl: {e}");
+                1
+            }
+        },
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if matches!(args.first().map(String::as_str), Some("claude-status" | "claude-connect" | "claude-disconnect")) {
+        std::process::exit(claude(&args));
+    }
     let req = match parse(&args) {
         Ok(r) => r,
         Err(e) => {
