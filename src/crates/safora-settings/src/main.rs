@@ -3,12 +3,15 @@
 //! Every change is written to `~/.config/safora/config.toml` immediately; the bar and the
 //! compositor pick it up live.
 
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use gtk4 as gtk;
 use gtk::{gdk, glib, prelude::*};
 use safora_common::{
-    config::{BarPosition, Config, TileMode, WallpaperMode},
+    config::{BarPosition, Config, ThemeColors, TileMode, WallpaperMode},
     ipc::{self, Request},
 };
 
@@ -49,13 +52,24 @@ impl Ctx {
     }
 }
 
+impl Theme {
+    fn colors(&self) -> ThemeColors {
+        ThemeColors {
+            name: self.name.into(),
+            // Daylight is the only light preset.
+            dark: self.name != "Daylight",
+            desktop: self.desktop.into(),
+            bar_background: self.bar_bg.into(),
+            bar_foreground: self.bar_fg.into(),
+            accent: self.accent.into(),
+            border_active: self.accent.into(),
+            border_inactive: self.border_inactive.into(),
+        }
+    }
+}
+
 fn apply_theme(c: &mut Config, t: &Theme) {
-    c.bar.background = t.bar_bg.into();
-    c.bar.foreground = t.bar_fg.into();
-    c.bar.accent = t.accent.into();
-    c.colors.background = t.desktop.into();
-    c.colors.border_active = t.accent.into();
-    c.colors.border_inactive = t.border_inactive.into();
+    t.colors().apply(c);
 }
 
 mod keys;
@@ -199,24 +213,229 @@ fn entry(text: &str, on: impl Fn(String) + 'static) -> gtk::Entry {
 
 // --------------------------------------------------------------------- pages
 
+/// The colors of one theme, drawn as a strip of swatches.
+fn swatches(t: &ThemeColors) -> gtk::Box {
+    let sw = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    for hex in [&t.desktop, &t.bar_background, &t.accent] {
+        let patch = gtk::DrawingArea::new();
+        patch.set_content_width(34);
+        patch.set_content_height(26);
+        let c = hex_to_rgba(hex);
+        patch.set_draw_func(move |_, cr, w, h| {
+            cr.set_source_rgb(c.red() as f64, c.green() as f64, c.blue() as f64);
+            let _ = cr.rectangle(0.0, 0.0, w as f64, h as f64);
+            let _ = cr.fill();
+        });
+        sw.append(&patch);
+    }
+    sw
+}
+
+/// A clickable theme tile: swatches above the name.
+fn theme_button(t: &ThemeColors) -> gtk::Button {
+    let b = gtk::Button::new();
+    let inner = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    inner.append(&swatches(t));
+    let name = gtk::Label::new(Some(&t.name));
+    name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    name.set_max_width_chars(14);
+    inner.append(&name);
+    b.set_child(Some(&inner));
+    b
+}
+
+/// The "Create your own" editor: its color buttons always show the colors in use, and changing
+/// one recolors the desktop right away. "Save theme" stores the current colors under a name.
+struct ThemeEditor {
+    ctx: Rc<Ctx>,
+    name: gtk::Entry,
+    /// "Dark mode" at the top of the page: switching it picks the matching preset.
+    mode: gtk::Switch,
+    /// Dark mode for the theme being edited, keeping its colors.
+    dark: gtk::Switch,
+    colors: Vec<gtk::ColorDialogButton>,
+    mine: gtk::FlowBox,
+    status: gtk::Label,
+    /// Set while the widgets are being filled from the config, so their change signals are ignored.
+    syncing: Cell<bool>,
+}
+
+/// The editable colors of a theme, in the order the editor shows them.
+const THEME_FIELDS: [&str; 6] =
+    ["Desktop background", "Bar background", "Bar text", "Accent", "Focused window border", "Other window borders"];
+
+fn theme_field(t: &mut ThemeColors, i: usize) -> &mut String {
+    match i {
+        0 => &mut t.desktop,
+        1 => &mut t.bar_background,
+        2 => &mut t.bar_foreground,
+        3 => &mut t.accent,
+        4 => &mut t.border_active,
+        _ => &mut t.border_inactive,
+    }
+}
+
+impl ThemeEditor {
+    fn new(ctx: &Rc<Ctx>) -> Rc<Self> {
+        let mine = gtk::FlowBox::new();
+        mine.set_selection_mode(gtk::SelectionMode::None);
+        mine.set_max_children_per_line(3);
+        mine.set_column_spacing(10);
+        mine.set_row_spacing(10);
+        let name = gtk::Entry::new();
+        name.set_placeholder_text(Some("My theme"));
+        name.set_width_chars(22);
+        let status = gtk::Label::new(None);
+        status.set_xalign(0.0);
+        status.add_css_class("dim-label");
+        let ed = Rc::new(Self {
+            ctx: ctx.clone(),
+            name,
+            mode: gtk::Switch::new(),
+            dark: gtk::Switch::new(),
+            colors: (0..THEME_FIELDS.len()).map(|_| gtk::ColorDialogButton::new(Some(gtk::ColorDialog::new()))).collect(),
+            mine,
+            status,
+            syncing: Cell::new(false),
+        });
+        ed.dark.set_valign(gtk::Align::Center);
+        ed.mode.set_valign(gtk::Align::Center);
+        let weak = Rc::downgrade(&ed);
+        ed.mode.connect_active_notify(move |s| {
+            let Some(ed) = weak.upgrade() else { return };
+            if !ed.syncing.get() {
+                ed.apply(&if s.is_active() { &THEMES[0] } else { &THEMES[4] }.colors());
+            }
+        });
+        for (i, b) in ed.colors.iter().enumerate() {
+            let weak = Rc::downgrade(&ed);
+            b.connect_rgba_notify(move |b| {
+                let Some(ed) = weak.upgrade() else { return };
+                if ed.syncing.get() {
+                    return;
+                }
+                let hex = rgba_to_hex(&b.rgba());
+                ed.ctx.update(|cfg| {
+                    let mut t = ThemeColors::from_config("", cfg);
+                    *theme_field(&mut t, i) = hex;
+                    t.apply(cfg);
+                });
+            });
+        }
+        let weak = Rc::downgrade(&ed);
+        ed.dark.connect_active_notify(move |s| {
+            let Some(ed) = weak.upgrade() else { return };
+            if !ed.syncing.get() {
+                ed.ctx.update(|cfg| cfg.appearance.dark = s.is_active());
+                ed.sync();
+            }
+        });
+        ed.sync();
+        ed.rebuild_mine();
+        ed
+    }
+
+    /// Show the colors currently in use.
+    fn sync(&self) {
+        self.syncing.set(true);
+        let mut t = ThemeColors::from_config("", &self.ctx.cfg.borrow());
+        for (i, b) in self.colors.iter().enumerate() {
+            b.set_rgba(&hex_to_rgba(theme_field(&mut t, i)));
+        }
+        self.dark.set_active(t.dark);
+        self.mode.set_active(t.dark);
+        self.syncing.set(false);
+    }
+
+    /// Switch the desktop to `t` and show its colors in the editor.
+    fn apply(&self, t: &ThemeColors) {
+        self.ctx.update(|c| t.apply(c));
+        self.sync();
+    }
+
+    fn save(self: &Rc<Self>) {
+        let name = self.name.text().trim().to_string();
+        if name.is_empty() {
+            self.status.set_text("Type a name for the theme first.");
+            self.name.grab_focus();
+            return;
+        }
+        let mut replaced = false;
+        self.ctx.update(|cfg| {
+            let t = ThemeColors::from_config(&name, cfg);
+            let themes = &mut cfg.appearance.themes;
+            if let Some(old) = themes.iter_mut().find(|o| o.name.eq_ignore_ascii_case(&name)) {
+                *old = t;
+                replaced = true;
+            } else {
+                themes.push(t);
+            }
+        });
+        self.status.set_text(&if replaced { format!("Updated \u{201c}{name}\u{201d}.") } else { format!("Saved \u{201c}{name}\u{201d}.") });
+        self.rebuild_mine();
+    }
+
+    /// Refill the "My themes" tiles from the config.
+    fn rebuild_mine(self: &Rc<Self>) {
+        while let Some(child) = self.mine.first_child() {
+            self.mine.remove(&child);
+        }
+        let themes = self.ctx.cfg.borrow().appearance.themes.clone();
+        if themes.is_empty() {
+            let l = gtk::Label::new(Some("No saved themes yet. Make one below."));
+            l.add_css_class("dim-label");
+            l.set_xalign(0.0);
+            self.mine.append(&l);
+            return;
+        }
+        for t in themes {
+            let tile = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            let b = theme_button(&t);
+            let ed = self.clone();
+            let theme = t.clone();
+            b.connect_clicked(move |_| ed.apply(&theme));
+            tile.append(&b);
+
+            let actions = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            actions.set_halign(gtk::Align::Center);
+            let edit = gtk::Button::from_icon_name("document-edit-symbolic");
+            edit.set_tooltip_text(Some("Edit: use this theme and load it into the editor below"));
+            edit.add_css_class("flat");
+            let ed = self.clone();
+            let theme = t.clone();
+            edit.connect_clicked(move |_| {
+                ed.apply(&theme);
+                ed.name.set_text(&theme.name);
+                ed.status.set_text("Change the colors, then press Save theme to update it.");
+            });
+            actions.append(&edit);
+            let del = gtk::Button::from_icon_name("user-trash-symbolic");
+            del.set_tooltip_text(Some("Delete this theme"));
+            del.add_css_class("flat");
+            let ed = self.clone();
+            let name = t.name.clone();
+            del.connect_clicked(move |_| {
+                ed.ctx.update(|cfg| cfg.appearance.themes.retain(|o| o.name != name));
+                ed.status.set_text(&format!("Deleted \u{201c}{name}\u{201d}."));
+                // Defer: this button is inside the tile being removed.
+                let ed = ed.clone();
+                glib::idle_add_local_once(move || ed.rebuild_mine());
+            });
+            actions.append(&del);
+            tile.append(&actions);
+            self.mine.append(&tile);
+        }
+    }
+}
+
 fn appearance_page(ctx: &Rc<Ctx>) -> gtk::Box {
     let p = page();
+    let editor = ThemeEditor::new(ctx);
+
     p.append(&heading("Mode"));
-    let dark = ctx.cfg.borrow().appearance.dark;
-    let c = ctx.clone();
-    p.append(&row(
-        "Dark mode",
-        &switch(dark, move |on| {
-            // Dark mode also swaps the bar and window colors to the matching preset.
-            let t = if on { &THEMES[0] } else { &THEMES[4] };
-            c.update(|cfg| {
-                cfg.appearance.dark = on;
-                apply_theme(cfg, t);
-            });
-        }),
-    ));
+    p.append(&row("Dark mode", &editor.mode));
     p.append(&heading("Theme"));
-    let note = gtk::Label::new(Some("Pick a preset, or fine-tune the colors on the Bar and Windows pages."));
+    let note = gtk::Label::new(Some("Pick a preset or one of your own themes, or make a new one below."));
     note.set_xalign(0.0);
     note.set_wrap(true);
     p.append(&note);
@@ -227,43 +446,53 @@ fn appearance_page(ctx: &Rc<Ctx>) -> gtk::Box {
     flow.set_column_spacing(10);
     flow.set_row_spacing(10);
     for t in THEMES {
-        let b = gtk::Button::new();
-        let sw = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        for hex in [t.desktop, t.bar_bg, t.accent] {
-            let patch = gtk::DrawingArea::new();
-            patch.set_content_width(34);
-            patch.set_content_height(26);
-            let c = hex_to_rgba(hex);
-            patch.set_draw_func(move |_, cr, w, h| {
-                cr.set_source_rgb(c.red() as f64, c.green() as f64, c.blue() as f64);
-                let _ = cr.rectangle(0.0, 0.0, w as f64, h as f64);
-                let _ = cr.fill();
-            });
-            sw.append(&patch);
-        }
-        let inner = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        inner.append(&sw);
-        inner.append(&gtk::Label::new(Some(t.name)));
-        b.set_child(Some(&inner));
-        let ctx = ctx.clone();
-        b.connect_clicked(move |_| {
-            ctx.update(|c| {
-                apply_theme(c, t);
-                // Daylight is the only light preset.
-                c.appearance.dark = t.name != "Daylight";
-            });
-        });
+        let colors = t.colors();
+        let b = theme_button(&colors);
+        let ed = editor.clone();
+        b.connect_clicked(move |_| ed.apply(&colors));
         flow.append(&b);
     }
     p.append(&flow);
+
+    p.append(&heading("My themes"));
+    p.append(&editor.mine);
+
+    p.append(&heading("Create your own"));
+    let hint = gtk::Label::new(Some(
+        "These are the colors in use right now; changes show up immediately. Start from any theme above, adjust the colors, then name it and save it. Saving under an existing name updates that theme.",
+    ));
+    hint.set_wrap(true);
+    hint.set_xalign(0.0);
+    hint.add_css_class("dim-label");
+    p.append(&hint);
+    for (label, b) in THEME_FIELDS.iter().zip(&editor.colors) {
+        p.append(&row(label, b));
+    }
+    p.append(&row("Dark apps and windows", &editor.dark));
+    let save = gtk::Button::with_label("Save theme");
+    save.add_css_class("suggested-action");
+    let ed = editor.clone();
+    save.connect_clicked(move |_| ed.save());
+    let ed = editor.clone();
+    editor.name.connect_activate(move |_| ed.save());
+    let save_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    save_row.append(&editor.name);
+    save_row.append(&save);
+    p.append(&row("Theme name", &save_row));
+    p.append(&editor.status);
 
     p.append(&heading("Reset"));
     let reset = gtk::Button::with_label("Restore all defaults");
     reset.set_halign(gtk::Align::Start);
     reset.add_css_class("destructive-action");
+    reset.set_tooltip_text(Some("Your saved themes are kept"));
     let ctx = ctx.clone();
     reset.connect_clicked(move |b| {
-        ctx.update(|c| *c = Config::default());
+        ctx.update(|c| {
+            let themes = std::mem::take(&mut c.appearance.themes);
+            *c = Config::default();
+            c.appearance.themes = themes;
+        });
         if let Some(w) = b.root().and_downcast::<gtk::Window>() {
             w.close(); // reopen to show the restored values
         }

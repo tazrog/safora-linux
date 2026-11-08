@@ -231,11 +231,61 @@ impl Default for Desktop {
 pub struct Appearance {
     /// Dark mode for the bar, windows borders and GTK applications.
     pub dark: bool,
+    /// Color themes the user made and saved in Settings.
+    pub themes: Vec<ThemeColors>,
 }
 
 impl Default for Appearance {
     fn default() -> Self {
-        Self { dark: true }
+        Self { dark: true, themes: Vec::new() }
+    }
+}
+
+/// A named set of desktop colors: one of the presets, or a theme the user saved.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThemeColors {
+    pub name: String,
+    /// Dark mode for GTK applications while this theme is in use.
+    pub dark: bool,
+    pub desktop: String,
+    pub bar_background: String,
+    pub bar_foreground: String,
+    pub accent: String,
+    pub border_active: String,
+    pub border_inactive: String,
+}
+
+impl Default for ThemeColors {
+    fn default() -> Self {
+        Self::from_config("", &Config::default())
+    }
+}
+
+impl ThemeColors {
+    /// The colors `cfg` uses right now, under the name `name`.
+    pub fn from_config(name: &str, cfg: &Config) -> Self {
+        Self {
+            name: name.into(),
+            dark: cfg.appearance.dark,
+            desktop: cfg.colors.background.clone(),
+            bar_background: cfg.bar.background.clone(),
+            bar_foreground: cfg.bar.foreground.clone(),
+            accent: cfg.bar.accent.clone(),
+            border_active: cfg.colors.border_active.clone(),
+            border_inactive: cfg.colors.border_inactive.clone(),
+        }
+    }
+
+    /// Switch `cfg` to these colors (and this theme's dark/light mode).
+    pub fn apply(&self, cfg: &mut Config) {
+        cfg.appearance.dark = self.dark;
+        cfg.colors.background = self.desktop.clone();
+        cfg.bar.background = self.bar_background.clone();
+        cfg.bar.foreground = self.bar_foreground.clone();
+        cfg.bar.accent = self.accent.clone();
+        cfg.colors.border_active = self.border_active.clone();
+        cfg.colors.border_inactive = self.border_inactive.clone();
     }
 }
 
@@ -557,6 +607,22 @@ mod tests {
         let text = toml::to_string_pretty(&Config::default()).unwrap();
         let back: Config = toml::from_str(&text).unwrap();
         assert_eq!(back.bar.right, Config::default().bar.right);
+    }
+
+    #[test]
+    fn custom_theme_roundtrip() {
+        let mut cfg = Config::default();
+        let mut t = ThemeColors::from_config("Mine", &cfg);
+        t.accent = "#ff0000".into();
+        t.dark = false;
+        cfg.appearance.themes.push(t.clone());
+        let back: Config = toml::from_str(&toml::to_string_pretty(&cfg).unwrap()).unwrap();
+        assert_eq!(back.appearance.themes, vec![t.clone()]);
+        let mut applied = Config::default();
+        t.apply(&mut applied);
+        assert_eq!(applied.bar.accent, "#ff0000");
+        assert!(!applied.appearance.dark);
+        assert_eq!(ThemeColors::from_config("Mine", &applied), t);
     }
 
     #[test]
