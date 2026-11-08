@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/safora-common", "crates/saforawm", "crates/safora-bar", "crates/safora-settings", "crates/safora-installer", "crates/safora-panels", "crates/safora-lock"]
+members = ["crates/safora-common", "crates/saforawm", "crates/safora-bar", "crates/safora-settings", "crates/safora-installer", "crates/safora-panels", "crates/safora-lock", "crates/safora-viewer"]
 
 [workspace.package]
 version = "0.1.0"

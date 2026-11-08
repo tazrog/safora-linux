@@ -11,6 +11,7 @@ compositor, a GTK4 status bar and a graphical installer with full-disk encryptio
 | `src/crates/safora-bar` | **safora-bar** – GTK4 + layer-shell bar with pluggable widgets. |
 | `src/crates/safora-settings` | **safora-settings** – GTK4 app for looks and layout (writes the config; changes apply live). |
 | `src/crates/safora-installer` | **safora-installer** – GTK4 graphical installer front end. |
+| `src/crates/safora-viewer` | **safora-viewer** – GTK4 image viewer, the default for images: open (file, Ctrl+O, drag and drop), zoom (Ctrl+wheel, pinch, +/−, F fit, 1 actual size), drag to pan, ←/→ through the folder. Themes: Match System (default, follows dark mode live), Light, Dark; background and transparency checkerboard (`~/.config/safora/viewer.toml`). |
 | `src/crates/safora-common` | Shared config + IPC types. |
 | `distro/` | archiso profile, installer backend script, ISO and VirtualBox helper scripts. |
 
@@ -51,7 +52,7 @@ before putting it on real hardware, and keep your data backed up.
   only replaced if you confirm. The widget refreshes only while `claude` is running in a terminal; otherwise it shows the
   last values, dimmed. `saforactl claude-connect` / `claude-disconnect` do the same from a shell.
 * **Wallpapers**: three included Safora wallpapers (default, dawn, aurora) or any PNG/JPEG/WebP via *Safora Settings → Wallpaper* (fill/fit/stretch/centre).
-* **Looks & layout**: six theme presets, bar position/height/margin/radius/opacity/font/colors, gaps,
+* **Looks & layout**: six theme presets plus your own saved themes (Appearance → Create your own: edit the six colors live, name and save, edit or delete later), bar position/height/margin/radius/opacity/font/colors, gaps,
   borders, tiling mode, master ratio, desktop and border colors, keyboard layout, startup programs.
 * **Settings pages**: Appearance (dark/light; Settings itself follows it), Wallpaper, Display, Bar, Widgets, Windows, Fonts, Sound, Network
   (networks are scanned automatically every few seconds, hidden networks can be joined by typing the SSID), Bluetooth, **Power** (screen-off and
@@ -67,9 +68,10 @@ before putting it on real hardware, and keep your data backed up.
   guest display stops updating (black or half-drawn screen, also on text consoles); with VBoxSVGA a live resize shows a skewed picture.
 
 Default shortcuts (`Mod` = Super, or Alt when nested): `Mod+Enter` terminal · `Mod+D` launcher ·
-`Mod+Q` close · `Mod+F` fullscreen · `Mod+Shift+Space` float · `Mod+Space` layout ·
+`Mod+W` close · `Mod+F` fullscreen · `Mod+Shift+Space` float · `Mod+Space` layout ·
 `Mod+J/K` or `Mod+Tab` focus · `Mod+Shift+J/K` reorder · `Mod+1…9` workspace ·
-`Mod+Shift+1…9` move window · `Mod+S` settings · `Mod+Shift+R` reload · `Mod+Shift+E` quit ·
+`Mod+Shift+1…9` move window · `Mod+Ctrl+←/→` narrower/wider · `Mod+Ctrl+↑/↓` shorter/taller ·
+`Mod+Ctrl+0` even out sizes · `Mod+S` settings · `Mod+Shift+R` reload · `Mod+Shift+E` quit ·
 `Ctrl+Alt+F1…F6` virtual terminals. Add your own under `[keybinds]` in `~/.config/safora/config.toml`.
 
 `saforactl state|workspace N|move N|layout|float|fullscreen|close|spawn CMD|reload|quit` controls a running session.
@@ -80,6 +82,14 @@ Default shortcuts (`Mod` = Super, or Alt when nested): `Mod+Enter` terminal · `
 * sysctl hardening, rare network protocols and FireWire DMA modules blacklisted, core dumps disabled.
 * NetworkManager with **random MAC addresses**, IPv6 privacy addresses, **DNS-over-TLS** (opportunistic) via systemd-resolved, DNSSEC.
 * **zram swap** instead of a swap partition, so nothing sensitive is paged to disk. `/tmp` is `nosuid,nodev`. Default `umask 077`.
+* **Low RAM boot (local AI)**: the boot menu of installed systems has a second entry, *Safora Linux - Low RAM (local AI)*
+  (never the default), that frees as much memory as possible for local AI models (e.g. Ollama). Wi-Fi, sound and Bluetooth
+  stay off: the kernel loads no Wi-Fi or sound drivers (`module_blacklist=cfg80211,snd_pcm`), and a systemd generator
+  (`/usr/lib/safora/safora-lowram-generator`, triggered by the `safora.lowram` kernel parameter) masks NetworkManager,
+  wpa_supplicant, resolved, timesyncd, Bluetooth, PulseAudio/PipeWire, power-profiles-daemon, upower, bolt, fwupd and the like
+  for that boot only. Services you added yourself (`ollama.service`, ...) start as usual and are reachable on `127.0.0.1`.
+  After you log in you get the compositor and one terminal: no bar and no startup programs (`Mod+D` still opens the launcher).
+  A Bluetooth keyboard can still unlock the disk, but it stops working after login.
 * Root account is locked; the installed user administers the machine through `sudo`.
 * HTTPS-only package mirrors; no telemetry anywhere.
 * **Firefox** is preconfigured by `/etc/firefox/policies/policies.json`: telemetry, studies, Pocket and sponsored content off,
@@ -104,6 +114,8 @@ Default shortcuts (`Mod` = Super, or Alt when nested): `Mod+Enter` terminal · `
   (`sof-firmware`, `alsa-ucm-conf`), Wi-Fi 7/Bluetooth firmware (`linux-firmware-intel`), Thunderbolt/USB4 authorisation (`bolt`), firmware updates (`fwupd`), `wireless-regdb`.
 * The installer tailors the install to the machine: it removes AMD microcode/GPU firmware on Intel CPUs, Intel microcode on AMD CPUs, and the VirtualBox guest tools on real hardware.
 * Kernel command line on bare-metal Intel: `intel_iommu=on` (blocks DMA attacks through Thunderbolt/USB4). Encrypted disks use LUKS2 with the faster `no-read-workqueue,no-write-workqueue` mode.
+* **USB Burner** (`usbburner`, from `distro/usbburner`) writes ISO and disk images to USB sticks, with SHA-256 check and read-back verify.
+* **Xarchiver** (with 7-Zip) is the archive manager and the default for zip, tar, 7z and other archives; **safora-viewer** is the default image viewer (`/etc/xdg/mimeapps.list`).
 * Vim and Git are installed (`EDITOR=vim`).
 * **Several monitors**: every connected screen is lit and laid out left to right. Windows tile on the first (primary) screen; the other screens get the wallpaper and their own bar.
   `Mod+O` sends the focused window to the next screen (it floats there; sending it back to the first screen tiles it again). Fullscreen covers the screen the pointer is on.
@@ -171,7 +183,7 @@ with an unencrypted install, with multiple monitors, or with mouse interaction i
 
 ## Building
 
-The unprivileged build sandbox (a full Arch root, with thousands of symlinks) lives outside this folder, in `~/.local/share/safora/archroot` (override with `SAFORA_SANDBOX`), so the project folder can be copied or backed up anywhere. The 17 symlinks of the ISO profile are listed in `distro/symlinks.txt` and created by `build-iso.sh`.
+The unprivileged build sandbox (a full Arch root, with thousands of symlinks) lives outside this folder, in `~/.local/share/safora/archroot` (override with `SAFORA_SANDBOX`), so the project folder can be copied or backed up anywhere. The 18 symlinks of the ISO profile are listed in `distro/symlinks.txt` and created by `build-iso.sh`.
 
 Everything below runs unprivileged except the final ISO step.
 
@@ -179,6 +191,7 @@ Everything below runs unprivileged except the final ISO step.
 # 1. Build the Rust workspace inside the Arch sandbox (see scripts/sandbox.sh)
 scripts/sandbox.sh bash -c 'cd /src && cargo build --release'
 
+# 1b. (optional) Put the new apps and config on this machine too:  sudo scripts/install-local.sh  [--all]
 # 2. Build the ISO (needs root: mkarchiso installs packages into a chroot)
 sudo bash distro/build-iso.sh       # → out/safora-YYYY.MM.DD-x86_64.iso  (FAST=1 for quick dev builds)
 

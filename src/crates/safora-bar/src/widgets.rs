@@ -356,6 +356,156 @@ fn cpu(ctx: &Rc<Ctx>, o: &WidgetOpts) -> gtk::Widget {
 }
 
 fn ram(ctx: &Rc<Ctx>, o: &WidgetOpts) -> gtk::Widget {
+    let content = ram_metric(ctx, o);
+    let (pop, body) = popover_box();
+    ram_cleaner(ctx, &pop, &body);
+    menu_button(&content, &pop).upcast()
+}
+
+/// Whether a program appears to own one of the open windows (app ids are reverse-DNS or bare names).
+fn has_window(name: &str, app_ids: &[String]) -> bool {
+    let n = name.to_lowercase();
+    app_ids.iter().any(|id| {
+        let last = id.rsplit('.').next().unwrap_or(id);
+        id == &n || last == n || (n.len() >= 4 && (id.contains(&n) || n.contains(last) && last.len() >= 4))
+    })
+}
+
+/// The RAM cleaner popover: lists your programs by memory use and closes the ones you don't need.
+fn ram_cleaner(ctx: &Rc<Ctx>, pop: &gtk::Popover, body: &gtk::Box) {
+    body.set_width_request(320);
+    body.append(&title("RAM cleaner"));
+    let summary = label("");
+    summary.add_css_class("muted");
+    body.append(&summary);
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    let scroller = gtk::ScrolledWindow::builder()
+        .child(&list)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .min_content_height(80)
+        .max_content_height(360)
+        .propagate_natural_height(true)
+        .build();
+    body.append(&scroller);
+    let status = label("Closing a program discards its unsaved work.");
+    status.set_wrap(true);
+    status.set_max_width_chars(40);
+    status.add_css_class("muted");
+    body.append(&status);
+    let refresh_btn = gtk::Button::with_label("Refresh");
+    body.append(&refresh_btn);
+
+    let refresh: Rc<dyn Fn()> = {
+        let (ctx, summary, list, status) = (ctx.clone(), summary.clone(), list.clone(), status.clone());
+        let me: Rc<RefCell<Option<std::rc::Weak<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+        let me2 = me.clone();
+        let f: Rc<dyn Fn()> = Rc::new(move || {
+            let (ctx, summary, list, status, me) = (ctx.clone(), summary.clone(), list.clone(), status.clone(), me2.clone());
+            once(
+                || (sys::read_mem(), sys::read_mem_extra(), sys::read_app_memory()),
+                move |(mem, (cached, swap_used, swap_total), apps)| {
+                    if let Some((total, avail)) = mem {
+                        let used = total.saturating_sub(avail);
+                        let mut s = format!(
+                            "{} used of {} · {} free · {} cache",
+                            sys::human_bytes(used * 1024),
+                            sys::human_bytes(total * 1024),
+                            sys::human_bytes(avail * 1024),
+                            sys::human_bytes(cached * 1024)
+                        );
+                        if swap_total > 0 {
+                            s.push_str(&format!("\nSwap {} of {}", sys::human_bytes(swap_used * 1024), sys::human_bytes(swap_total * 1024)));
+                        }
+                        summary.set_text(&s);
+                    }
+                    let app_ids: Vec<String> = ctx.last_state.borrow().windows.iter().map(|w| w.app_id.to_lowercase()).collect();
+                    clear(&list);
+                    if apps.is_empty() {
+                        list.append(&label("Nothing to clean up."));
+                    }
+                    let reload = me.borrow().as_ref().and_then(|w| w.upgrade());
+                    for app in apps.into_iter().take(12) {
+                        list.append(&cleaner_row(app, &app_ids, &status, reload.clone()));
+                    }
+                },
+            );
+        });
+        *me.borrow_mut() = Some(Rc::downgrade(&f));
+        f
+    };
+    {
+        let refresh = refresh.clone();
+        refresh_btn.connect_clicked(move |_| refresh());
+    }
+    pop.connect_show(move |_| refresh());
+}
+
+fn cleaner_row(app: sys::AppMem, app_ids: &[String], status: &gtk::Label, reload: Option<Rc<dyn Fn()>>) -> gtk::Widget {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let names = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    names.set_hexpand(true);
+    let name = label(&app.name);
+    name.set_ellipsize(pango::EllipsizeMode::End);
+    name.set_max_width_chars(20);
+    let windowed = has_window(&app.name, app_ids);
+    let procs = if app.pids.len() == 1 { String::new() } else { format!(" · {} processes", app.pids.len()) };
+    let sub = label(&format!("{}{procs}", if windowed { "open window" } else { "background" }));
+    sub.add_css_class("muted");
+    names.append(&name);
+    names.append(&sub);
+    let size = gtk::Label::new(Some(&sys::human_bytes(app.kib * 1024)));
+    let close = gtk::Button::with_label("Close");
+    close.set_tooltip_text(Some("Ask the program to quit"));
+    row.append(&names);
+    row.append(&size);
+    row.append(&close);
+
+    let pids = Rc::new(RefCell::new(app.pids));
+    let forcing = Rc::new(Cell::new(false));
+    let (status, app_name, freed) = (status.clone(), app.name, sys::human_bytes(app.kib * 1024));
+    close.connect_clicked(move |btn| {
+        let force = forcing.get();
+        btn.set_sensitive(false);
+        btn.set_label(if force { "Killing…" } else { "Closing…" });
+        let targets = pids.borrow().clone();
+        let (btn, pids, forcing, status, app_name, freed, reload) =
+            (btn.clone(), pids.clone(), forcing.clone(), status.clone(), app_name.clone(), freed.clone(), reload.clone());
+        once(
+            move || {
+                sys::signal_pids(&targets, if force { "KILL" } else { "TERM" });
+                // Give the program a few seconds to save state and exit.
+                let mut left = targets.clone();
+                for _ in 0..20 {
+                    std::thread::sleep(Duration::from_millis(200));
+                    left = sys::alive_pids(&targets);
+                    if left.is_empty() {
+                        break;
+                    }
+                }
+                left
+            },
+            move |left| {
+                if left.is_empty() {
+                    status.set_text(&format!("Closed {app_name} — about {freed} freed."));
+                    if let Some(r) = reload {
+                        r();
+                    }
+                } else {
+                    *pids.borrow_mut() = left;
+                    forcing.set(true);
+                    btn.set_sensitive(true);
+                    btn.set_label("Force quit");
+                    btn.add_css_class("destructive-action");
+                    btn.set_tooltip_text(Some("Stop the program immediately; unsaved work is lost"));
+                    status.set_text(&format!("{app_name} is still running (it may be asking to save)."));
+                }
+            },
+        );
+    });
+    row.upcast()
+}
+
+fn ram_metric(ctx: &Rc<Ctx>, o: &WidgetOpts) -> gtk::Widget {
     let format = o.format.clone();
     extra::metric(ctx, o, "RAM", "memory-symbolic", 3, sys::read_mem, move |m| {
         let (total, avail) = m?;

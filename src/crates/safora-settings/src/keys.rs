@@ -14,7 +14,7 @@ use crate::{heading, page, row, Ctx};
 const DEFAULT_SPECS: &[(&str, &str)] = &[
     ("Mod+Return", "Open terminal"),
     ("Mod+d", "Application launcher"),
-    ("Mod+q", "Close window"),
+    ("Mod+w", "Close window"),
     ("Mod+f", "Fullscreen"),
     ("Mod+Shift+space", "Float / tile window"),
     ("Mod+o", "Send window to next monitor"),
@@ -28,6 +28,11 @@ const DEFAULT_SPECS: &[(&str, &str)] = &[
     ("Mod+Shift+r", "Reload configuration"),
     ("Mod+Shift+e", "Log out"),
     ("Mod+s", "Open these settings"),
+    ("Mod+Ctrl+Right", "Make window wider"),
+    ("Mod+Ctrl+Left", "Make window narrower"),
+    ("Mod+Ctrl+Down", "Make window taller"),
+    ("Mod+Ctrl+Up", "Make window shorter"),
+    ("Mod+Ctrl+0", "Reset window sizes"),
 ];
 
 /// Actions offered in the editor: (label, config action, argument kind).
@@ -50,6 +55,11 @@ const ACTIONS: &[(&str, &str, Arg)] = &[
     ("Focus previous window", "prev", Arg::None),
     ("Move window forward", "swap_next", Arg::None),
     ("Move window back", "swap_prev", Arg::None),
+    ("Make window wider", "resize:wider", Arg::None),
+    ("Make window narrower", "resize:narrower", Arg::None),
+    ("Make window taller", "resize:taller", Arg::None),
+    ("Make window shorter", "resize:shorter", Arg::None),
+    ("Reset window sizes", "resize:reset", Arg::None),
     ("Send window to next monitor", "output", Arg::None),
     ("Lock screen", "lock", Arg::None),
     ("Reload configuration", "reload", Arg::None),
@@ -59,6 +69,9 @@ const ACTIONS: &[(&str, &str, Arg)] = &[
 
 /// Human description of a config action string.
 fn describe(action: &str) -> String {
+    if let Some((label, _, _)) = ACTIONS.iter().find(|(_, a, _)| a.contains(':') && *a == action.trim()) {
+        return label.to_string();
+    }
     let (head, arg) = action.split_once(':').map_or((action, ""), |(h, a)| (h.trim(), a.trim()));
     match ACTIONS.iter().find(|(_, a, _)| *a == head) {
         Some((_, "spawn", _)) => format!("Run: {arg}"),
@@ -293,7 +306,7 @@ pub fn keys_page(ctx: &Rc<Ctx>) -> gtk::Box {
     p.append(&save);
     p.append(&status);
     p.append(&note(
-        "Combinations the desktop already uses (such as Mod+Q) act immediately and can't be recorded; type them in the Keys box instead to change what they do. Key names follow xkb: Return, space, Print, F5, XF86AudioRaiseVolume…",
+        "Combinations the desktop already uses (such as Mod+W) act immediately and can't be recorded; type them in the Keys box instead to change what they do. Key names follow xkb: Return, space, Print, F5, XF86AudioRaiseVolume…",
     ));
 
     // ---------------------------------------------------------------- defaults
@@ -302,12 +315,15 @@ pub fn keys_page(ctx: &Rc<Ctx>) -> gtk::Box {
     let rows = [
         (format!("{m} + Enter"), "Open terminal"),
         (format!("{m} + D"), "Application launcher"),
-        (format!("{m} + Q"), "Close window"),
+        (format!("{m} + W"), "Close window"),
         (format!("{m} + F"), "Fullscreen"),
         (format!("{m} + Shift + Space"), "Float / tile window"),
         (format!("{m} + Space"), "Change tiling layout"),
         (format!("{m} + J / K  ·  {m} + Tab"), "Focus next / previous window"),
         (format!("{m} + Shift + J / K"), "Move window within the layout"),
+        (format!("{m} + Ctrl + → / ←"), "Make window wider / narrower"),
+        (format!("{m} + Ctrl + ↓ / ↑"), "Make window taller / shorter"),
+        (format!("{m} + Ctrl + 0"), "Reset window sizes"),
         (format!("{m} + O"), "Send window to next monitor"),
         (format!("{m} + L"), "Lock screen"),
         (format!("{m} + 1 … 9"), "Go to workspace"),

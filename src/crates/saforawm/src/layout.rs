@@ -179,6 +179,33 @@ impl Node {
         }
     }
 
+    /// Move the divider of the innermost `dir` split around leaf `id` so that leaf's side grows by `delta`
+    /// (negative shrinks). Returns false when no such split exists (e.g. "wider" with only stacked windows).
+    pub fn grow(&mut self, id: u32, dir: Dir, delta: f32) -> bool {
+        let Node::Split { dir: d, ratio, a, b } = self else { return false };
+        let in_a = a.contains(id);
+        if !in_a && !b.contains(id) {
+            return false;
+        }
+        if (if in_a { a } else { b }).grow(id, dir, delta) {
+            return true;
+        }
+        if *d != dir {
+            return false;
+        }
+        *ratio = (*ratio + if in_a { delta } else { -delta }).clamp(0.1, 0.9);
+        true
+    }
+
+    /// Put every divider back in the middle.
+    pub fn reset_ratios(&mut self) {
+        if let Node::Split { ratio, a, b, .. } = self {
+            *ratio = 0.5;
+            a.reset_ratios();
+            b.reset_ratios();
+        }
+    }
+
     pub fn swap_leaves(&mut self, x: u32, y: u32) {
         match self {
             Node::Leaf(i) => {
@@ -293,6 +320,32 @@ mod tests {
         t.ids(&mut ids);
         assert_eq!(ids, vec![1, 3]);
         assert!(Node::Leaf(5).remove(5).is_none());
+    }
+
+    #[test]
+    fn grow_moves_the_nearest_matching_divider() {
+        let mut t = Node::Leaf(1);
+        t.insert(1, 2, WIDE, 10); // 1 | 2
+        t.insert(2, 3, Rect::new(805, 0, 795, 800), 10); // 1 | (2 / 3)
+        let width = |t: &Node, id| {
+            let mut r = vec![];
+            t.rects(WIDE, 10, &mut r);
+            r.iter().find(|(i, _)| *i == id).unwrap().1
+        };
+        let before = width(&t, 3);
+        assert!(t.grow(3, Dir::SideBySide, 0.1));
+        assert!(width(&t, 3).w > before.w, "the right column got wider");
+        assert!(width(&t, 1).w < before.x, "window 1 gave up the space");
+        let h = width(&t, 3).h;
+        assert!(t.grow(3, Dir::Stacked, 0.1));
+        assert!(width(&t, 3).h > h);
+        assert!(!Node::Leaf(1).grow(1, Dir::SideBySide, 0.1));
+        for _ in 0..20 {
+            t.grow(1, Dir::SideBySide, 0.1);
+        }
+        assert!(width(&t, 3).w > 0, "ratios stay clamped");
+        t.reset_ratios();
+        assert_eq!(width(&t, 1).w, (WIDE.w - 10) / 2);
     }
 
     #[test]

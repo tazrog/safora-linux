@@ -383,6 +383,75 @@ fn choice_row(text: &str, selected: bool, on_pick: impl Fn() + 'static) -> gtk::
 
 // --------------------------------------------------------------------------------------- network
 
+/// Show a modal "Connecting to …" dialog while `work` (a blocking nmcli call) runs on a worker thread. On success the
+/// dialog closes by itself; on failure it shows the reason and a Close button. `done` gets the outcome.
+fn connect_with_dialog(
+    anchor: &impl IsA<gtk::Widget>,
+    ssid: &str,
+    work: impl FnOnce() -> Result<(), String> + Send + 'static,
+    done: impl FnOnce(bool) + 'static,
+) {
+    let win = gtk::Window::builder().title("Connecting").modal(true).resizable(false).deletable(false).default_width(360).build();
+    if let Some(parent) = anchor.root().and_downcast::<gtk::Window>() {
+        win.set_transient_for(Some(&parent));
+    }
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    for m in [body.clone()] {
+        m.set_margin_top(20);
+        m.set_margin_bottom(16);
+        m.set_margin_start(20);
+        m.set_margin_end(20);
+    }
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let spinner = gtk::Spinner::new();
+    spinner.start();
+    let msg = label(&format!("Connecting to “{ssid}”…"));
+    msg.set_wrap(true);
+    msg.set_hexpand(true);
+    row.append(&spinner);
+    row.append(&msg);
+    body.append(&row);
+    let hint = label("Waiting for the network to accept the password and give this computer an address. This can take up to a minute.");
+    hint.set_wrap(true);
+    hint.add_css_class("dim-label");
+    body.append(&hint);
+    let close = gtk::Button::with_label("Close");
+    close.set_halign(gtk::Align::End);
+    close.set_visible(false);
+    body.append(&close);
+    win.set_child(Some(&body));
+    {
+        let win = win.clone();
+        close.connect_clicked(move |_| win.close());
+    }
+    win.present();
+
+    let ssid = ssid.to_string();
+    bg(work, move |res| match res {
+        Ok(()) => {
+            win.close();
+            done(true);
+        }
+        Err(e) => {
+            spinner.stop();
+            spinner.set_visible(false);
+            msg.set_markup(&format!(
+                "<b>Could not connect to “{}”.</b>",
+                glib::markup_escape_text(&ssid)
+            ));
+            hint.set_text(&if e.to_lowercase().contains("secrets were required") || e.to_lowercase().contains("password") {
+                "The password was not accepted. Check it and try again.".to_string()
+            } else {
+                e
+            });
+            win.set_deletable(true);
+            close.set_visible(true);
+            close.grab_focus();
+            done(false);
+        }
+    });
+}
+
 /// Wi-Fi switch, network list with password prompt, and connection status.
 pub fn network_panel() -> gtk::Box {
     let p = panel();
@@ -479,8 +548,8 @@ pub fn network_panel() -> gtk::Box {
                         r.append(&label(&format!("{}%", ap.signal)));
                         b.set_child(Some(&r));
                         let (selected, pw_row, pw_for, busy) = (selected.clone(), pw_row.clone(), pw_for.clone(), busy.clone());
-                        b.connect_clicked(move |_| {
-                            if ap.in_use {
+                        b.connect_clicked(move |b| {
+                            if ap.in_use || busy.get() {
                                 return;
                             }
                             if ap.secured && !known {
@@ -490,7 +559,7 @@ pub fn network_panel() -> gtk::Box {
                             } else {
                                 busy.set(true);
                                 let (ssid, busy) = (ap.ssid.clone(), busy.clone());
-                                bg(move || sys::wifi_connect(&ssid, None), move |_| busy.set(false));
+                                connect_with_dialog(b, &ap.ssid, move || sys::wifi_connect(&ssid, None), move |_| busy.set(false));
                             }
                         });
                         list.append(&b);
@@ -501,19 +570,32 @@ pub fn network_panel() -> gtk::Box {
     };
 
     {
-        let (selected, pw, pw_row, busy) = (selected.clone(), pw.clone(), pw_row.clone(), busy.clone());
-        join.connect_clicked(move |_| {
+        let pw_enter = pw.clone();
+        let (selected, pw, pw_row, busy, refresh) = (selected.clone(), pw.clone(), pw_row.clone(), busy.clone(), refresh.clone());
+        let join_now = Rc::new(move || {
             let ssid = selected.borrow().clone();
             let pass = pw.text().to_string();
-            if ssid.is_empty() || pass.is_empty() {
+            if ssid.is_empty() || pass.is_empty() || busy.get() {
                 return;
             }
             pw.set_text("");
             pw_row.set_visible(false);
             busy.set(true);
-            let busy = busy.clone();
-            bg(move || sys::wifi_connect(&ssid, Some(&pass)), move |_| busy.set(false));
+            let (busy, refresh, pw_row, pw, name) = (busy.clone(), refresh.clone(), pw_row.clone(), pw.clone(), ssid.clone());
+            let anchor = pw_row.clone();
+            connect_with_dialog(&anchor, &name, move || sys::wifi_connect(&ssid, Some(&pass)), move |ok| {
+                busy.set(false);
+                if !ok {
+                    // Let the user correct the password straight away.
+                    pw_row.set_visible(true);
+                    pw.grab_focus();
+                }
+                refresh(false);
+            });
         });
+        let j = join_now.clone();
+        join.connect_clicked(move |_| j());
+        pw_enter.connect_activate(move |_| join_now());
     }
     // Hidden networks: type the network name (SSID) and, if needed, the password.
     let hidden = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -529,17 +611,20 @@ pub fn network_panel() -> gtk::Box {
     hidden.append(&h_join);
     p.append(&hidden);
     {
-        let (h_ssid, h_pw, busy) = (h_ssid.clone(), h_pw.clone(), busy.clone());
-        h_join.connect_clicked(move |_| {
+        let (h_ssid, h_pw, busy, refresh) = (h_ssid.clone(), h_pw.clone(), busy.clone(), refresh.clone());
+        h_join.connect_clicked(move |b| {
             let ssid = h_ssid.text().trim().to_string();
-            if ssid.is_empty() {
+            if ssid.is_empty() || busy.get() {
                 return;
             }
             let pass = h_pw.text().to_string();
             h_pw.set_text("");
             busy.set(true);
-            let busy = busy.clone();
-            bg(move || sys::wifi_connect_hidden(&ssid, Some(&pass)), move |_| busy.set(false));
+            let (busy, refresh, name) = (busy.clone(), refresh.clone(), ssid.clone());
+            connect_with_dialog(b, &name, move || sys::wifi_connect_hidden(&ssid, Some(&pass)), move |_| {
+                busy.set(false);
+                refresh(false);
+            });
         });
     }
     let scan = gtk::Button::with_label("Scan now");

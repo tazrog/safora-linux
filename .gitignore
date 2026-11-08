@@ -8,3 +8,5 @@
 /src/*.log
 *.log
 /pack.txt
+# Python bytecode
+__pycache__/

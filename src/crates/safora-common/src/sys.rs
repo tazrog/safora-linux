@@ -66,6 +66,146 @@ pub fn read_mem() -> Option<(u64, u64)> {
     parse_meminfo(&std::fs::read_to_string("/proc/meminfo").ok()?)
 }
 
+/// `(cached_kib, swap_used_kib, swap_total_kib)` — page cache (incl. buffers, reclaimable slab) and swap.
+pub fn parse_mem_extra(text: &str) -> (u64, u64, u64) {
+    let get = |key: &str| {
+        text.lines()
+            .find(|l| l.starts_with(key))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0)
+    };
+    let cached = get("Cached:") + get("Buffers:") + get("SReclaimable:");
+    let (st, sf) = (get("SwapTotal:"), get("SwapFree:"));
+    (cached, st.saturating_sub(sf), st)
+}
+
+pub fn read_mem_extra() -> (u64, u64, u64) {
+    parse_mem_extra(&std::fs::read_to_string("/proc/meminfo").unwrap_or_default())
+}
+
+// ----------------------------------------------------------------- ram cleaner
+
+/// One program (all of its processes) and the memory it holds.
+#[derive(Debug, Clone)]
+pub struct AppMem {
+    pub name: String,
+    pub pids: Vec<u32>,
+    /// Proportional set size in KiB (shared pages split fairly between their users).
+    pub kib: u64,
+}
+
+/// Session plumbing that must never be offered for closing.
+const PROTECTED: &[&str] = &[
+    "systemd", "(sd-pam)", "sd-pam", "dbus-daemon", "dbus-broker", "dbus-broker-launch", "pipewire", "pipewire-pulse",
+    "wireplumber", "Xwayland", "gnome-keyring-daemon", "ssh-agent", "gpg-agent", "polkit-agent", "at-spi-bus-launcher",
+    "at-spi2-registryd", "xdg-desktop-portal", "xdg-desktop-portal-gtk", "xdg-desktop-portal-wlr", "xdg-document-portal",
+    "xdg-permission-store", "dconf-service", "login", "agetty", "greetd", "seatd",
+];
+
+fn is_protected(name: &str) -> bool {
+    name.starts_with("safora") || name.starts_with("gvfs") || name.starts_with("dbus-") || PROTECTED.contains(&name)
+}
+
+/// Value of a `Key:  1234 kB` style line.
+fn status_field(text: &str, key: &str) -> Option<u64> {
+    text.lines().find(|l| l.starts_with(key))?.split_whitespace().nth(1)?.parse().ok()
+}
+
+fn real_uid(status: &str) -> Option<u32> {
+    status.lines().find(|l| l.starts_with("Uid:"))?.split_whitespace().nth(1)?.parse().ok()
+}
+
+fn parent_pid(pid: u32) -> Option<u32> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // The command name may contain spaces and parentheses; fields resume after the last ')'.
+    stat[stat.rfind(')')? + 1..].split_whitespace().nth(1)?.parse().ok()
+}
+
+/// Friendly program name: the executable's file name, or for interpreters the script they run.
+fn program_name(pid: u32, comm: &str) -> String {
+    let base = |p: &str| p.rsplit('/').next().unwrap_or(p).to_string();
+    let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok().map(|p| base(&p.to_string_lossy().replace(" (deleted)", "")));
+    let exe = exe.filter(|e| !e.is_empty()).unwrap_or_else(|| comm.to_string());
+    let interp = exe.starts_with("python") || exe.starts_with("perl") || exe.starts_with("ruby")
+        || matches!(exe.as_str(), "sh" | "bash" | "dash" | "zsh" | "node" | "java" | "gjs" | "lua");
+    if interp {
+        if let Ok(cmd) = std::fs::read(format!("/proc/{pid}/cmdline")) {
+            if let Some(script) = cmd.split(|b| *b == 0).skip(1).map(String::from_utf8_lossy).find(|a| !a.is_empty() && !a.starts_with('-')) {
+                return base(&script);
+            }
+        }
+    }
+    exe
+}
+
+/// Programs owned by the current user, biggest first. Kernel threads, session plumbing, and this
+/// process's own ancestors (the compositor, the session) are left out.
+pub fn read_app_memory() -> Vec<AppMem> {
+    let me = std::process::id();
+    let uid = std::fs::read_to_string("/proc/self/status").ok().as_deref().and_then(real_uid);
+    let mut ancestors = vec![me];
+    let mut p = me;
+    while let Some(pp) = parent_pid(p).filter(|pp| *pp > 1) {
+        ancestors.push(pp);
+        p = pp;
+    }
+
+    let mut apps: Vec<AppMem> = Vec::new();
+    let Ok(dir) = std::fs::read_dir("/proc") else { return apps };
+    for entry in dir.flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) else { continue };
+        if ancestors.contains(&pid) {
+            continue;
+        }
+        let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) else { continue };
+        if uid.is_some() && real_uid(&status) != uid {
+            continue;
+        }
+        // Kernel threads have no VmRSS line.
+        let Some(rss) = status_field(&status, "VmRSS:") else { continue };
+        let comm = status.lines().next().and_then(|l| l.strip_prefix("Name:")).unwrap_or("").trim().to_string();
+        let name = program_name(pid, &comm);
+        if is_protected(&name) || is_protected(&comm) {
+            continue;
+        }
+        let kib = std::fs::read_to_string(format!("/proc/{pid}/smaps_rollup"))
+            .ok()
+            .and_then(|s| status_field(&s, "Pss:"))
+            .unwrap_or(rss);
+        match apps.iter_mut().find(|a| a.name == name) {
+            Some(a) => {
+                a.pids.push(pid);
+                a.kib += kib;
+            }
+            None => apps.push(AppMem { name, pids: vec![pid], kib }),
+        }
+    }
+    apps.retain(|a| a.kib > 0);
+    apps.sort_by(|a, b| b.kib.cmp(&a.kib));
+    apps
+}
+
+/// Send `signal` ("TERM" or "KILL") to every pid.
+pub fn signal_pids(pids: &[u32], signal: &str) {
+    let mut args = vec![format!("-{signal}"), "--".to_string()];
+    args.extend(pids.iter().map(|p| p.to_string()));
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let _ = run("kill", &refs);
+}
+
+/// The subset of `pids` that still exist (and are not zombies).
+pub fn alive_pids(pids: &[u32]) -> Vec<u32> {
+    pids.iter()
+        .copied()
+        .filter(|p| {
+            std::fs::read_to_string(format!("/proc/{p}/status"))
+                .map(|s| !s.lines().any(|l| l.starts_with("State:") && l.contains('Z')))
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
 pub fn human_bytes(b: u64) -> String {
     const UNITS: [&str; 5] = ["B", "K", "M", "G", "T"];
     let mut v = b as f64;
@@ -428,6 +568,9 @@ mod tests {
     fn meminfo() {
         let (t, a) = parse_meminfo("MemTotal:  8000 kB\nMemFree: 1 kB\nMemAvailable:  2000 kB\n").unwrap();
         assert_eq!((t, a), (8000, 2000));
+        let x = parse_mem_extra("Buffers: 10 kB\nCached:  100 kB\nSwapCached: 5 kB\nSwapTotal: 800 kB\nSwapFree: 300 kB\nSReclaimable: 20 kB\n");
+        assert_eq!(x, (130, 500, 800));
+        assert!(is_protected("saforawm") && is_protected("pipewire") && !is_protected("firefox"));
     }
 
     #[test]
@@ -843,23 +986,47 @@ pub fn set_source_volume(percent: u32) {
 
 // ----------------------------------------------------------------- network extras
 
-pub fn wifi_connect(ssid: &str, password: Option<&str>) -> bool {
-    let mut args = vec!["device", "wifi", "connect", ssid];
-    if let Some(p) = password {
-        args.push("password");
-        args.push(p);
-    }
-    run("nmcli", &args).is_some()
-}
-
-/// Join a network that doesn't broadcast its name.
-pub fn wifi_connect_hidden(ssid: &str, password: Option<&str>) -> bool {
-    let mut args = vec!["device", "wifi", "connect", ssid, "hidden", "yes"];
+/// Join a Wi-Fi network and wait (up to 45 s) until it is up. `Err` carries nmcli's reason.
+pub fn wifi_connect(ssid: &str, password: Option<&str>) -> Result<(), String> {
+    let mut args = vec!["--wait", "40", "device", "wifi", "connect", ssid];
     if let Some(p) = password.filter(|p| !p.is_empty()) {
         args.push("password");
         args.push(p);
     }
-    run("nmcli", &args).is_some()
+    nmcli_connect(&args)
+}
+
+/// Join a network that doesn't broadcast its name.
+pub fn wifi_connect_hidden(ssid: &str, password: Option<&str>) -> Result<(), String> {
+    let mut args = vec!["--wait", "40", "device", "wifi", "connect", ssid, "hidden", "yes"];
+    if let Some(p) = password.filter(|p| !p.is_empty()) {
+        args.push("password");
+        args.push(p);
+    }
+    nmcli_connect(&args)
+}
+
+fn nmcli_connect(args: &[&str]) -> Result<(), String> {
+    let out = Command::new("timeout").arg("45").arg("nmcli").args(args).output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        return Ok(());
+    }
+    if out.status.code() == Some(124) {
+        return Err("Timed out waiting for the network.".into());
+    }
+    let err = String::from_utf8_lossy(&out.stderr);
+    let msg = err.lines().map(str::trim).filter(|l| !l.is_empty()).last().unwrap_or("Could not connect.");
+    Err(msg.strip_prefix("Error: ").unwrap_or(msg).to_string())
+}
+
+/// Whether claude.ai (the internet, not just a local network) can be reached. Safora turns off NetworkManager's own
+/// connectivity checks, so NetworkManager only rules out "no network at all"; otherwise one HEAD request to
+/// claude.ai, the host the Claude Code install downloads from, decides.
+pub fn internet_online() -> bool {
+    if run("nmcli", &["-t", "networking", "connectivity"]).as_deref().map(str::trim) == Some("none") {
+        return false;
+    }
+    run_for(8, "curl", &["-sS", "-o", "/dev/null", "--max-time", "6", "-I", "https://claude.ai"]).is_some()
 }
 
 pub fn wifi_forget(name: &str) {

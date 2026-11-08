@@ -9,4 +9,6 @@ if [ "$(id -u)" -eq 0 ]; then
 fi
 echo "Installing Claude Code from https://claude.ai/install.sh ..."
 curl -fsSL https://claude.ai/install.sh | bash
+# Let Claude Code report its plan usage to the bar's Claude widget (keeps any status line you already have).
+saforactl claude-connect || echo "Note: connect it later in Settings → Widgets → Claude Code usage."
 echo "Done. Open a new terminal and run:  claude"

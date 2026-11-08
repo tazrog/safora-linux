@@ -1,0 +1,247 @@
+#!/usr/bin/python3 -I
+"""
+usbburner-helper — privileged back end for USB Burner.
+
+Runs as root (via pkexec). Writes a disk image to a removable whole-disk
+block device, then optionally verifies it by reading it back.
+
+Usage: usbburner-helper IMAGE DEVICE [--verify]
+
+Protocol (stdout, one message per line):
+    STAGE <write|verify|sync>
+    PROGRESS <done_bytes> <total_bytes>
+    INFO <text>
+    DONE
+    ERROR <text>
+
+Closing the helper's stdin (or writing "cancel") aborts the operation.
+"""
+
+import bz2
+import gzip
+import hashlib
+import json
+import lzma
+import os
+import re
+import stat
+import subprocess
+import sys
+import threading
+
+CHUNK = 4 * 1024 * 1024          # 4 MiB write size
+SYNC_EVERY = 64 * 1024 * 1024    # flush to device every 64 MiB so progress is honest
+
+cancelled = threading.Event()
+
+
+def emit(*parts):
+    print(*parts, flush=True)
+
+
+def fail(msg):
+    emit("ERROR", msg)
+    sys.exit(1)
+
+
+def watch_stdin():
+    """Abort if the GUI closes our stdin or asks us to cancel."""
+    try:
+        for line in sys.stdin:
+            if line.strip() == "cancel":
+                break
+    except Exception:
+        pass
+    cancelled.set()
+
+
+def check_cancel():
+    if cancelled.is_set():
+        fail("Cancelled by user. The USB drive is now in an incomplete state.")
+
+
+def lsblk(device):
+    out = subprocess.run(
+        ["lsblk", "-J", "-b", "-o",
+         "NAME,PATH,TYPE,TRAN,RM,HOTPLUG,SIZE,RO,MOUNTPOINTS", device],
+        check=True, capture_output=True, text=True,
+    ).stdout
+    devs = json.loads(out).get("blockdevices", [])
+    if not devs:
+        fail(f"{device} not found")
+    return devs[0]
+
+
+def truthy(v):
+    return v is True or v in ("1", 1, "true")
+
+
+def walk(node):
+    yield node
+    for child in node.get("children", []) or []:
+        yield from walk(child)
+
+
+SYSTEM_MOUNTS = {"/", "/boot", "/boot/efi", "/efi", "/home", "/usr", "/var", "[SWAP]"}
+
+
+def validate_device(device):
+    if not re.fullmatch(r"/dev/[A-Za-z0-9_\-]+", device):
+        fail(f"Invalid device path: {device}")
+    try:
+        st = os.stat(device)
+    except OSError as e:
+        fail(f"Cannot access {device}: {e}")
+    if not stat.S_ISBLK(st.st_mode):
+        fail(f"{device} is not a block device")
+
+    info = lsblk(device)
+    if info.get("type") != "disk":
+        fail(f"{device} is not a whole disk (type={info.get('type')})")
+    if truthy(info.get("ro")):
+        fail(f"{device} is read-only (write-protect switch?)")
+    removable = (info.get("tran") == "usb" or truthy(info.get("rm"))
+                 or truthy(info.get("hotplug")))
+    if not removable:
+        fail(f"{device} is not a removable/USB device; refusing to write")
+    for node in walk(info):
+        if node is not info and node.get("type") != "part":
+            fail(f"{device} has an open {node.get('type')} volume ({node['path']}). "
+                 "Unmount and lock/close it first.")
+        for mp in node.get("mountpoints") or []:
+            if mp in SYSTEM_MOUNTS:
+                fail(f"{node['path']} is mounted at {mp}; refusing to write a system disk")
+    return info
+
+
+def unmount_all(info):
+    for node in walk(info):
+        mps = [m for m in (node.get("mountpoints") or []) if m]
+        for mp in mps:
+            emit("INFO", f"Unmounting {node['path']} ({mp})")
+            r = subprocess.run(["umount", node["path"]], capture_output=True, text=True)
+            if r.returncode != 0:
+                r = subprocess.run(["umount", "-l", node["path"]], capture_output=True, text=True)
+                if r.returncode != 0:
+                    fail(f"Could not unmount {node['path']}: {r.stderr.strip()}")
+
+
+def open_image(path):
+    """Return (stream, raw_file, raw_size, compressed)."""
+    raw = open(path, "rb")
+    raw_size = os.fstat(raw.fileno()).st_size
+    magic = raw.read(6)
+    raw.seek(0)
+    if magic.startswith(b"\xfd7zXZ\x00"):
+        return lzma.open(raw), raw, raw_size, True
+    if magic.startswith(b"\x1f\x8b"):
+        return gzip.open(raw), raw, raw_size, True
+    if magic.startswith(b"BZh"):
+        return bz2.open(raw), raw, raw_size, True
+    if magic.startswith(b"\x28\xb5\x2f\xfd"):
+        try:
+            from compression import zstd  # Python 3.14+
+        except ImportError:
+            fail("Zstandard images need Python 3.14+")
+        return zstd.open(raw), raw, raw_size, True
+    return raw, raw, raw_size, False
+
+
+def write_image(image, device, dev_size):
+    stream, raw, raw_size, compressed = open_image(image)
+    if not compressed and raw_size > dev_size:
+        fail(f"Image ({raw_size} bytes) is larger than the device ({dev_size} bytes)")
+
+    h = hashlib.sha256()
+    written = 0
+    since_sync = 0
+    emit("STAGE", "write")
+    fd = os.open(device, os.O_WRONLY | os.O_EXCL | os.O_CLOEXEC)
+    try:
+        while True:
+            check_cancel()
+            buf = stream.read(CHUNK)
+            if not buf:
+                break
+            if written + len(buf) > dev_size:
+                fail("Image is larger than the device")
+            view = memoryview(buf)
+            while view:
+                n = os.write(fd, view)
+                view = view[n:]
+            h.update(buf)
+            written += len(buf)
+            since_sync += len(buf)
+            if since_sync >= SYNC_EVERY:
+                os.fdatasync(fd)
+                since_sync = 0
+            done = raw.tell() if compressed else written
+            emit("PROGRESS", done, raw_size)
+        emit("STAGE", "sync")
+        os.fsync(fd)
+        emit("PROGRESS", raw_size, raw_size)
+    finally:
+        os.close(fd)
+        stream.close()
+        raw.close()
+    return written, h.hexdigest()
+
+
+def verify(device, length, expected):
+    emit("STAGE", "verify")
+    h = hashlib.sha256()
+    fd = os.open(device, os.O_RDONLY | os.O_CLOEXEC)
+    try:
+        # Drop cached pages so we really read back from the stick.
+        os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+        remaining = length
+        done = 0
+        while remaining > 0:
+            check_cancel()
+            buf = os.read(fd, min(CHUNK, remaining))
+            if not buf:
+                fail("Unexpected end of device while verifying")
+            h.update(buf)
+            remaining -= len(buf)
+            done += len(buf)
+            emit("PROGRESS", done, length)
+    finally:
+        os.close(fd)
+    if h.hexdigest() != expected:
+        fail("Verification FAILED: data on the drive does not match the image. "
+             "The drive may be faulty or counterfeit.")
+    emit("INFO", "Verification passed")
+
+
+def main():
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    do_verify = "--verify" in sys.argv[1:]
+    if len(args) != 2:
+        fail("usage: usbburner-helper IMAGE DEVICE [--verify]")
+    image, device = args
+    if os.geteuid() != 0:
+        fail("Helper must run as root")
+    if not os.path.isfile(image):
+        fail(f"Image not found: {image}")
+
+    threading.Thread(target=watch_stdin, daemon=True).start()
+
+    info = validate_device(device)
+    dev_size = int(info.get("size") or 0)
+    unmount_all(info)
+
+    try:
+        written, digest = write_image(image, device, dev_size)
+        if do_verify:
+            verify(device, written, digest)
+    except OSError as e:
+        fail(f"I/O error: {e}")
+    try:  # ask the kernel to re-read the new partition table
+        subprocess.run(["blockdev", "--rereadpt", device], capture_output=True)
+    except OSError:
+        pass
+    emit("DONE")
+
+
+if __name__ == "__main__":
+    main()

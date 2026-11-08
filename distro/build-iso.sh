@@ -19,7 +19,7 @@ WORK=${WORK:-/var/tmp/safora-build}
 OUT=$TOP/out
 OWNER=${SUDO_USER:-root}
 
-for b in saforawm saforactl safora-bar safora-lock safora-settings safora-installer; do
+for b in saforawm saforactl safora-bar safora-lock safora-settings safora-installer safora-viewer; do
     [[ -x $BIN/$b ]] || { echo "Missing $BIN/$b — build the release binaries first (see README.md)." >&2; exit 1; }
 done
 [[ -f $BOOTSTRAP ]] || { echo "Missing Arch bootstrap tarball: $BOOTSTRAP" >&2; exit 1; }
@@ -82,6 +82,12 @@ install -Dm755 "$BIN/safora-lock"         "$PROFILE/airootfs/usr/bin/safora-lock
 install -Dm755 "$BIN/safora-bar"        "$PROFILE/airootfs/usr/bin/safora-bar"
 install -Dm755 "$BIN/safora-settings"   "$PROFILE/airootfs/usr/bin/safora-settings"
 install -Dm755 "$BIN/safora-installer"  "$PROFILE/airootfs/usr/bin/safora-installer"
+install -Dm755 "$BIN/safora-viewer"     "$PROFILE/airootfs/usr/bin/safora-viewer"
+# USB Burner (distro/usbburner): the GUI finds its helper next to its real path, so /usr/bin/usbburner is a
+# symlink (distro/symlinks.txt) to /usr/lib/usbburner/usbburner.py.
+install -Dm755 "$HERE/usbburner/usbburner.py"      "$PROFILE/airootfs/usr/lib/usbburner/usbburner.py"
+install -Dm755 "$HERE/usbburner/usbburner-helper"  "$PROFILE/airootfs/usr/lib/usbburner/usbburner-helper"
+install -Dm644 "$HERE/usbburner/usbburner.desktop" "$PROFILE/airootfs/usr/share/applications/usbburner.desktop"
 install -Dm755 "$HERE/installer/safora-install-backend" "$PROFILE/airootfs/usr/lib/safora/safora-install-backend"
 cp "$HERE/profile/pacman.conf" "$PROFILE/pacman.conf"
 if [[ $FAST == 1 ]]; then

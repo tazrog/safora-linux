@@ -394,6 +394,11 @@ impl SaforaState {
             ring: None,
         });
         self.relayout();
+        // A new window takes the keyboard from an on-demand layer surface (the bar holds it after it was
+        // clicked, e.g. to launch this window), so it can be typed into right away. Exclusive ones keep it.
+        if self.layer_on_demand() {
+            self.layer_focus = None;
+        }
         self.focus_client(Some(id));
     }
 
@@ -494,6 +499,64 @@ impl SaforaState {
         }
         let other = if forward { order[(pos + 1) % order.len()] } else { order[(pos + order.len() - 1) % order.len()] };
         self.clients.swap(f, other);
+        self.relayout();
+    }
+
+    /// Resize the focused window: `dx`/`dy` are +1 (wider/taller), -1 (narrower/shorter) or 0.
+    /// Tiled windows move their split line by 5 % of the space; floating windows grow or shrink by 5 % of the screen.
+    pub fn resize_focused(&mut self, dx: i32, dy: i32) {
+        const STEP: f32 = 0.05;
+        let Some(i) = self.focused.and_then(|f| self.client_index(f)) else { return };
+        let (id, ws) = (self.clients[i].id, self.clients[i].workspace);
+        if self.clients[i].fullscreen {
+            return;
+        }
+        if self.clients[i].floating {
+            let Some(area) = self.usable_area() else { return };
+            let Some(r) = self.clients[i].float_rect else { return };
+            let (sw, sh) = ((area.size.w as f32 * STEP) as i32, (area.size.h as f32 * STEP) as i32);
+            let w = (r.w + dx * sw).clamp(160, area.size.w);
+            let h = (r.h + dy * sh).clamp(120, area.size.h);
+            // Keep the window's centre where it was.
+            self.clients[i].float_rect = Some(Rect::new(r.x - (w - r.w) / 2, r.y - (h - r.h) / 2, w, h));
+            self.relayout();
+            return;
+        }
+        let changed = match self.config.layout.mode {
+            TileMode::Smart => {
+                let tree = self.trees.get_mut(ws).and_then(Option::as_mut);
+                tree.is_some_and(|t| {
+                    let mut ok = false;
+                    if dx != 0 {
+                        ok |= t.grow(id, layout::Dir::SideBySide, dx as f32 * STEP);
+                    }
+                    if dy != 0 {
+                        ok |= t.grow(id, layout::Dir::Stacked, dy as f32 * STEP);
+                    }
+                    ok
+                })
+            }
+            TileMode::Master if dx != 0 => {
+                // The master window is the first tiled window on the workspace.
+                let master = self.clients.iter().find(|c| c.workspace == ws && !c.floating && !c.fullscreen).map(|c| c.id);
+                let sign = if master == Some(id) { dx } else { -dx };
+                let r = &mut self.config.layout.master_ratio;
+                *r = (*r + sign as f64 * STEP as f64).clamp(0.1, 0.9);
+                true
+            }
+            _ => false,
+        };
+        if changed {
+            self.relayout();
+        }
+    }
+
+    /// Undo manual resizing on the active workspace.
+    pub fn reset_sizes(&mut self) {
+        if let Some(t) = self.trees.get_mut(self.active_ws).and_then(Option::as_mut) {
+            t.reset_ratios();
+        }
+        self.config.layout.master_ratio = Config::load().layout.master_ratio;
         self.relayout();
     }
 
@@ -846,6 +909,9 @@ impl SaforaState {
 
     /// Open a status bar on a secondary monitor.
     pub fn spawn_bar_on(&self, output_name: &str) {
+        if crate::lowram() {
+            return;
+        }
         let mut cmd = Command::new("safora-bar");
         cmd.env("WAYLAND_DISPLAY", &self.socket_name).env("SAFORA_BAR_OUTPUT", output_name);
         match cmd.spawn() {
@@ -1028,6 +1094,8 @@ impl SaforaState {
             Action::FocusPrev => self.focus_cycle(false),
             Action::SwapNext => self.swap_focused(true),
             Action::SwapPrev => self.swap_focused(false),
+            Action::Resize(dx, dy) => self.resize_focused(dx, dy),
+            Action::ResizeReset => self.reset_sizes(),
             Action::Reload => self.reload_config(),
             Action::Quit => self.loop_signal.stop(),
             Action::VtSwitch(vt) => self.vt_switch = Some(vt),

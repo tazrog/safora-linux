@@ -200,8 +200,23 @@ pub fn running() -> bool {
     dir.flatten().any(|e| {
         e.file_name().to_str().is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit()))
             && e.metadata().is_ok_and(|m| m.uid() == me)
-            && fs::read_to_string(e.path().join("comm")).is_ok_and(|c| c.trim_end() == "claude")
+            && is_claude_process(&e.path())
     })
+}
+
+/// The native installer's binary shows up as `claude` (or, started by its real path, as the version
+/// number under `…/claude/versions/`); an npm install runs as `node …/@anthropic-ai/claude-code/cli.js`.
+fn is_claude_process(proc_dir: &std::path::Path) -> bool {
+    let Ok(comm) = fs::read_to_string(proc_dir.join("comm")) else { return false };
+    let comm = comm.trim_end();
+    if comm == "claude" {
+        return true;
+    }
+    if fs::read_link(proc_dir.join("exe")).is_ok_and(|p| p.to_string_lossy().contains("/claude/versions/")) {
+        return true;
+    }
+    comm == "node"
+        && fs::read(proc_dir.join("cmdline")).is_ok_and(|c| c.split(|&b| b == 0).take(3).any(|a| String::from_utf8_lossy(a).contains("claude-code")))
 }
 
 // ------------------------------------------------- hooking into Claude Code's settings

@@ -14,6 +14,12 @@ export _JAVA_AWT_WM_NONREPARENTING=1
 logdir="${XDG_STATE_HOME:-$HOME/.local/state}/safora"
 mkdir -p "$logdir"
 
+# Low RAM boot (boot menu entry "Low RAM - local AI", kernel parameter safora.lowram): the compositor
+# opens just a terminal; no bar, no startup programs. Network, sound and Bluetooth are not started.
+if grep -qwF safora.lowram /proc/cmdline 2>/dev/null; then
+    export SAFORA_LOWRAM=1
+fi
+
 live=0
 [ "${1:-}" = "--live" ] && live=1
 set --

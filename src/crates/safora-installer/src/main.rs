@@ -414,9 +414,14 @@ fn build_ui(app: &gtk::Application) {
     claude_note.set_wrap(true);
     claude_note.set_xalign(0.0);
     claude_note.add_css_class("dim-label");
+    let net_state = gtk::Label::new(Some("Checking the internet connection…"));
+    net_state.set_wrap(true);
+    net_state.set_xalign(0.0);
+    extras.append(&net_state);
     extras.append(&claude_code);
     extras.append(&claude_web);
     extras.append(&claude_note);
+    watch_internet(&extras, &net_state, &[claude_code.clone(), claude_web.clone()]);
 
     let plan = Rc::new(RefCell::new(Plan { uefi, ..Default::default() }));
 
@@ -667,6 +672,58 @@ fn build_ui(app: &gtk::Application) {
         show(run_idx);
         run_install(Plan::default(), &progress, &status, &log, &next, &show, done_idx, &win);
     }
+}
+
+/// While `page` is on screen, check every few seconds whether the internet can be reached, and grey out (and untick)
+/// the Claude options while it can't.
+fn watch_internet(page: &gtk::Box, state: &gtk::Label, options: &[gtk::CheckButton]) {
+    let options: Rc<Vec<gtk::CheckButton>> = Rc::new(options.to_vec());
+    for o in options.iter() {
+        o.set_sensitive(false);
+    }
+    let checking = Rc::new(std::cell::Cell::new(false));
+    let check = {
+        let (state, options, checking) = (state.clone(), options.clone(), checking.clone());
+        Rc::new(move || {
+            if checking.replace(true) {
+                return;
+            }
+            let (state, options, checking) = (state.clone(), options.clone(), checking.clone());
+            glib::spawn_future_local(async move {
+                let online = gtk::gio::spawn_blocking(safora_common::sys::internet_online).await.unwrap_or(false);
+                checking.set(false);
+                for o in options.iter() {
+                    if !online {
+                        o.set_active(false);
+                    }
+                    o.set_sensitive(online);
+                }
+                if online {
+                    state.remove_css_class("error");
+                    state.set_text("✓  Connected to the internet.");
+                } else {
+                    state.add_css_class("error");
+                    state.set_text(
+                        "No internet connection. Go back to “Network and Bluetooth” and connect to enable these options.",
+                    );
+                }
+            });
+        })
+    };
+    {
+        let check = check.clone();
+        page.connect_map(move |_| check());
+    }
+    let weak = page.downgrade();
+    glib::timeout_add_local(std::time::Duration::from_secs(5), move || match weak.upgrade() {
+        None => glib::ControlFlow::Break,
+        Some(p) => {
+            if p.is_mapped() {
+                check();
+            }
+            glib::ControlFlow::Continue
+        }
+    });
 }
 
 #[allow(clippy::too_many_arguments)]

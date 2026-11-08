@@ -15,3 +15,6 @@ etc/systemd/system/multi-user.target.wants/vboxservice.service /usr/lib/systemd/
 etc/systemd/system/sysinit.target.wants/systemd-timesyncd.service /usr/lib/systemd/system/systemd-timesyncd.service
 etc/systemd/system/timers.target.wants/fstrim.timer /usr/lib/systemd/system/fstrim.timer
 etc/systemd/user/sockets.target.wants/pulseaudio.socket /usr/lib/systemd/user/pulseaudio.socket
+usr/bin/usbburner /usr/lib/usbburner/usbburner.py
+usr/lib/systemd/system-generators/safora-lowram /usr/lib/safora/safora-lowram-generator
+usr/lib/systemd/user-generators/safora-lowram /usr/lib/safora/safora-lowram-generator

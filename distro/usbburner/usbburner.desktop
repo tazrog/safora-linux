@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=USB Burner
+GenericName=Bootable USB Creator
+Comment=Write Linux distribution images to USB drives for booting
+Exec=usbburner
+Icon=drive-removable-media
+Terminal=false
+Categories=System;Utility;GTK;
+Keywords=usb;iso;burn;flash;boot;live;
+StartupNotify=true

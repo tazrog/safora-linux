@@ -1,0 +1,19 @@
+#!/bin/sh
+# Safora: "Low RAM - local AI" boot menu entry, listed after the normal entry (never the default).
+#
+# Same kernel, initramfs and root (including the encrypted disk) as the normal entry, plus:
+#   safora.lowram                     network, sound and Bluetooth services are not started
+#                                     (/usr/lib/systemd/system-generators/safora-lowram); the
+#                                     desktop opens only a terminal, with no bar or startup programs
+#   module_blacklist=cfg80211,snd_pcm the kernel loads no Wi-Fi and no sound drivers
+# Bluetooth stays loadable in the kernel so a paired keyboard can still unlock the disk at boot.
+set -e
+[ -x /etc/grub.d/10_linux ] || exit 0
+
+# Reuse the stock entry generator and keep only its first (simple) entry, not the "Advanced" submenu.
+GRUB_DISTRIBUTOR=Safora \
+GRUB_DISABLE_SUBMENU=n \
+GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT} safora.lowram module_blacklist=cfg80211,snd_pcm" \
+    /etc/grub.d/10_linux | awk '/^submenu /{exit} {print}' | sed \
+        -e "s/^menuentry '[^']*'/menuentry 'Safora Linux - Low RAM (local AI)'/" \
+        -e "s/'gnulinux-simple-/'safora-lowram-/"

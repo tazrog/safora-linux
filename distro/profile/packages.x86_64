@@ -101,6 +101,9 @@ libsecret
 btop
 unzip
 zip
+# xarchiver: archive manager (also the "Extract here" / "Compress" actions in pcmanfm); 7zip adds 7z support
+xarchiver
+7zip
 
 # --- virtual machine guest support (inert on real hardware)
 virtualbox-guest-utils

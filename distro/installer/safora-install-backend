@@ -300,7 +300,7 @@ GREETD
         -e "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"${CMDLINE_LINUX}\"|" \
         -e "s|^#\?GRUB_DISABLE_OS_PROBER=.*|GRUB_DISABLE_OS_PROBER=true|" \
         -e "s|^GRUB_TIMEOUT=.*|GRUB_TIMEOUT=3|" \
-        -e "s|^GRUB_DISTRIBUTOR=.*|GRUB_DISTRIBUTOR=\"Safora Linux\"|" \
+        -e "s|^GRUB_DISTRIBUTOR=.*|GRUB_DISTRIBUTOR=\"Safora\"|" \
         "$MNT/etc/default/grub"
     grep -q '^GRUB_DISABLE_OS_PROBER' "$MNT/etc/default/grub" || echo 'GRUB_DISABLE_OS_PROBER=true' >> "$MNT/etc/default/grub"
     # Safora boot-menu theme. It lives on the unencrypted /boot so GRUB can read it.
@@ -335,6 +335,10 @@ GREETD
                'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash' \
            && [[ -x $MNT/home/$USERNAME/.local/bin/claude ]]; then
             echo "Claude Code installed (run: claude)"
+            # Have Claude Code report its plan usage to the bar's Claude widget (status-line hook in
+            # ~/.claude/settings.json). Never replaces a status line the user already has.
+            arch-chroot "$MNT" runuser -l "$USERNAME" -c 'saforactl claude-connect' \
+                || echo "note: could not connect Claude Code to the bar; use Settings → Widgets → Claude Code usage."
         else
             echo "note: Claude Code could not be installed (no network?). Run  safora-install-claude  later."
         fi

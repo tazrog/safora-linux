@@ -19,6 +19,11 @@ use safora_common::Config;
 
 use crate::state::SaforaState;
 
+/// True in the Low RAM session (set by `safora-session` when booted with `safora.lowram`).
+pub fn lowram() -> bool {
+    std::env::var_os("SAFORA_LOWRAM").is_some_and(|v| v == "1")
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -29,7 +34,7 @@ fn main() {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--help" || a == "-h") {
-        println!("usage: saforawm [--winit] [--exec COMMAND]\n\n  --winit        run nested in a window (development)\n  --exec CMD     run CMD once the session is up");
+        println!("usage: saforawm [--winit] [--exec COMMAND]\n\n  --winit        run nested in a window (development)\n  --exec CMD     run CMD once the session is up\n\nSAFORA_LOWRAM=1 (Low RAM boot): open only a terminal (no bar, no autostart programs)");
         return;
     }
     let nested = args.iter().any(|a| a == "--winit")
@@ -72,7 +77,12 @@ fn main() {
     std::env::remove_var("DISPLAY");
     tracing::info!("listening on {:?}", state.socket_name);
 
-    let autostart = state.config.general.autostart.clone();
+    // Low RAM boot (local AI): no bar and no startup programs, just a terminal to run the models from.
+    let autostart = if lowram() {
+        vec![state.config.general.terminal.clone()]
+    } else {
+        state.config.general.autostart.clone()
+    };
     for cmd in autostart.iter().chain(exec.iter()) {
         state.spawn(cmd);
     }

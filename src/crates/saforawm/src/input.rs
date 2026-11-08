@@ -37,6 +37,10 @@ pub enum Action {
     NextOutput,
     /// Lock the screen.
     Lock,
+    /// Make the focused window wider (+x) / narrower (-x) / taller (+y) / shorter (-y).
+    Resize(i32, i32),
+    /// Give the windows on this workspace equal shares again.
+    ResizeReset,
 }
 
 impl Action {
@@ -57,6 +61,14 @@ impl Action {
             "prev" => Action::FocusPrev,
             "swap_next" => Action::SwapNext,
             "swap_prev" => Action::SwapPrev,
+            "resize" => match arg.trim() {
+                "wider" => Action::Resize(1, 0),
+                "narrower" => Action::Resize(-1, 0),
+                "taller" => Action::Resize(0, 1),
+                "shorter" => Action::Resize(0, -1),
+                "reset" => Action::ResizeReset,
+                _ => return None,
+            },
             "reload" => Action::Reload,
             "quit" => Action::Quit,
             "none" => Action::None,
@@ -110,7 +122,7 @@ pub fn default_bindings(cfg: &Config) -> Vec<Binding> {
     let mut specs: Vec<(String, String)> = vec![
         ("Mod+Return".into(), format!("spawn:{}", cfg.general.terminal)),
         ("Mod+d".into(), format!("spawn:{}", cfg.general.launcher)),
-        ("Mod+q".into(), "close".into()),
+        ("Mod+w".into(), "close".into()),
         ("Mod+f".into(), "fullscreen".into()),
         ("Mod+Shift+space".into(), "float".into()),
         ("Mod+o".into(), "output".into()),
@@ -124,6 +136,11 @@ pub fn default_bindings(cfg: &Config) -> Vec<Binding> {
         ("Mod+Shift+r".into(), "reload".into()),
         ("Mod+Shift+e".into(), "quit".into()),
         ("Mod+s".into(), "spawn:safora-settings".into()),
+        ("Mod+Ctrl+Right".into(), "resize:wider".into()),
+        ("Mod+Ctrl+Left".into(), "resize:narrower".into()),
+        ("Mod+Ctrl+Down".into(), "resize:taller".into()),
+        ("Mod+Ctrl+Up".into(), "resize:shorter".into()),
+        ("Mod+Ctrl+0".into(), "resize:reset".into()),
     ];
     for n in 1..=9 {
         specs.push((format!("Mod+{n}"), format!("workspace:{n}")));
@@ -326,7 +343,7 @@ impl SaforaState {
         None
     }
 
-    fn layer_on_demand(&self) -> bool {
+    pub(crate) fn layer_on_demand(&self) -> bool {
         self.layer_focus.as_ref().is_some_and(|s| {
             self.layer_for(s).is_some_and(|(_, i)| i == KeyboardInteractivity::OnDemand)
         })
@@ -380,6 +397,9 @@ mod tests {
         assert_eq!(Action::parse("spawn: foot -e htop"), Some(Action::Spawn("foot -e htop".into())));
         assert_eq!(Action::parse("workspace:0"), None);
         assert_eq!(Action::parse("bogus"), None);
+        assert_eq!(Action::parse("resize:wider"), Some(Action::Resize(1, 0)));
+        assert_eq!(Action::parse("resize:reset"), Some(Action::ResizeReset));
+        assert_eq!(Action::parse("resize:sideways"), None);
     }
 
     #[test]
@@ -396,6 +416,7 @@ mod tests {
         let binds = default_bindings(&Config::default());
         assert!(binds.iter().any(|b| b.action == Action::Workspace(8)));
         assert!(binds.iter().any(|b| b.action == Action::MoveToWorkspace(0)));
+        assert!(binds.iter().any(|b| b.action == Action::Resize(0, -1)));
     }
 
     #[test]

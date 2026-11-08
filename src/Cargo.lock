@@ -1793,6 +1793,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "safora-viewer"
+version = "0.1.0"
+dependencies = [
+ "gtk4",
+ "safora-common",
+ "serde",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "saforawm"
 version = "0.1.0"
 dependencies = [

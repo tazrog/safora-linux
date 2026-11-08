@@ -1,0 +1,40 @@
+#!/bin/sh
+# Low RAM boot: the "Low RAM - local AI" boot menu entry (/etc/grub.d/11_safora_lowram) adds the
+# kernel parameter safora.lowram. On such a boot this generator masks everything that isn't needed to
+# run local AI models (network, sound, Bluetooth and their helpers), for that boot only: the masks
+# live in /run and are gone at the next boot. Services you added yourself, such as ollama.service,
+# still start as usual (local programs reach them on 127.0.0.1, which needs no network service).
+#
+# Installed as both a system and a user generator; systemd passes the scope in $SYSTEMD_SCOPE.
+# Arguments (from systemd): <normal dir> <early dir> <late dir>. The early dir outranks /etc.
+
+grep -qwF safora.lowram /proc/cmdline 2>/dev/null || exit 0
+early=${2:?missing generator output directory}
+
+if [ "${SYSTEMD_SCOPE:-system}" = user ]; then
+    # Sound servers and the Bluetooth file-transfer agent.
+    dirs="/etc/systemd/user /usr/lib/systemd/user"
+    units="pulseaudio.service pulseaudio.socket pipewire.service pipewire.socket
+           pipewire-pulse.service pipewire-pulse.socket wireplumber.service obex.service"
+else
+    dirs="/etc/systemd/system /usr/lib/systemd/system"
+    units="NetworkManager.service NetworkManager-dispatcher.service NetworkManager-wait-online.service
+           systemd-networkd.service systemd-networkd.socket systemd-networkd-wait-online.service
+           systemd-resolved.service systemd-timesyncd.service wpa_supplicant.service iwd.service
+           ModemManager.service avahi-daemon.service avahi-daemon.socket sshd.service sshd.socket
+           cups.service cups.socket
+           bluetooth.service
+           power-profiles-daemon.service upower.service rtkit-daemon.service bolt.service fwupd.service
+           vboxservice.service"
+fi
+
+mkdir -p "$early"
+for u in $units; do
+    for d in $dirs; do
+        if [ -e "$d/$u" ]; then
+            ln -sf /dev/null "$early/$u"
+            break
+        fi
+    done
+done
+exit 0
