@@ -266,15 +266,23 @@ impl SaforaState {
         let pos = self.pointer_location;
         let under = self.surface_under(pos);
 
-        // Focus follows mouse (only between windows, and never while a client holds a grab).
-        if self.config.general.focus_follows_mouse && self.layer_focus.is_none() {
+        // Focus follows mouse (only between windows, and never while a client holds a grab). A click on
+        // the bar (e.g. on a workspace button) leaves the keyboard with it; with no bar menu open,
+        // moving onto a window hands focus back, so following the mouse keeps working afterwards.
+        if self.config.general.focus_follows_mouse && (self.layer_focus.is_none() || self.layer_releasable()) {
             let pointer = self.seat.get_pointer().unwrap();
             if !pointer.is_grabbed() {
                 if let Some((window, _)) = self.window_under(pos) {
                     if let Some(idx) = self.client_index_for_surface(window.toplevel().unwrap().wl_surface()) {
                         let id = self.clients[idx].id;
-                        if self.focused != Some(id) && under.as_ref().is_some_and(|(s, _)| !self.is_layer_surface(s)) {
-                            self.focus_client(Some(id));
+                        if under.as_ref().is_some_and(|(s, _)| !self.is_layer_surface(s)) {
+                            if self.layer_focus.is_some() {
+                                self.layer_focus = None;
+                                self.focused = None; // so the keyboard focus below is set again
+                            }
+                            if self.focused != Some(id) {
+                                self.focus_client(Some(id));
+                            }
                         }
                     }
                 }
@@ -341,6 +349,13 @@ impl SaforaState {
             }
         }
         None
+    }
+
+    /// The keyboard is held by an on-demand layer surface (the bar) that has no menu open, so it
+    /// can be given back to the windows without interrupting anything.
+    pub(crate) fn layer_releasable(&self) -> bool {
+        self.layer_on_demand()
+            && self.layer_focus.as_ref().is_some_and(|s| smithay::desktop::PopupManager::popups_for_surface(s).next().is_none())
     }
 
     pub(crate) fn layer_on_demand(&self) -> bool {

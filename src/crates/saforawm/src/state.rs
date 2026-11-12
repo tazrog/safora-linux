@@ -99,6 +99,9 @@ pub struct SaforaState {
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
     pub xdg_decoration_state: XdgDecorationState,
+    /// xdg-foreign: lets a dialog drawn by another program (the file chooser of xdg-desktop-portal)
+    /// name its parent window, so it floats above that window instead of tiling behind it.
+    pub xdg_foreign_state: smithay::wayland::xdg_foreign::XdgForeignState,
     pub layer_shell_state: WlrLayerShellState,
     pub shm_state: ShmState,
     pub output_manager_state: OutputManagerState,
@@ -177,6 +180,7 @@ impl SaforaState {
         let compositor_state = CompositorState::new::<Self>(&dh);
         let xdg_shell_state = XdgShellState::new::<Self>(&dh);
         let xdg_decoration_state = XdgDecorationState::new::<Self>(&dh);
+        let xdg_foreign_state = smithay::wayland::xdg_foreign::XdgForeignState::new::<Self>(&dh);
         let layer_shell_state = WlrLayerShellState::new::<Self>(&dh);
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
@@ -214,6 +218,7 @@ impl SaforaState {
             compositor_state,
             xdg_shell_state,
             xdg_decoration_state,
+            xdg_foreign_state,
             layer_shell_state,
             shm_state,
             output_manager_state,
@@ -626,10 +631,18 @@ impl SaforaState {
         }
         self.active_ws = n;
         self.relayout();
+        // Switching by clicking the bar leaves the keyboard with the bar: give it to the new
+        // workspace's windows (unless a bar menu is open).
+        if self.layer_releasable() {
+            self.layer_focus = None;
+        }
         let next = self.last_focus[n]
             .filter(|id| self.client_by_id(*id).is_some())
             .or_else(|| self.ws_ids(n).first().copied());
         self.focus_client(next);
+        // The windows under the pointer changed without it moving: tell the one now under it (pointer
+        // enter) and, with focus follows mouse, focus it.
+        self.on_pointer_moved(smithay::backend::input::InputTime::now());
     }
 
     pub fn move_focused_to_workspace(&mut self, n: usize) {

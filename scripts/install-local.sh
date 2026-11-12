@@ -22,7 +22,7 @@ for b in "${BINS[@]}"; do
     fi
 done
 
-for f in usr/share/applications/safora-viewer.desktop etc/xdg/mimeapps.list etc/xdg/fuzzel/fuzzel.ini; do
+for f in usr/share/applications/safora-viewer.desktop usr/share/icons/hicolor/scalable/apps/safora-viewer.svg etc/xdg/mimeapps.list etc/xdg/fuzzel/fuzzel.ini; do
     install -Dm644 "$AIR/$f" "/$f"
     echo "  /$f"
 done
@@ -31,6 +31,7 @@ done
 install -Dm755 "$TOP/distro/usbburner/usbburner.py"      /usr/lib/usbburner/usbburner.py
 install -Dm755 "$TOP/distro/usbburner/usbburner-helper"  /usr/lib/usbburner/usbburner-helper
 install -Dm644 "$TOP/distro/usbburner/usbburner.desktop" /usr/share/applications/usbburner.desktop
+install -Dm644 "$TOP/distro/usbburner/usbburner.svg"     /usr/share/icons/hicolor/scalable/apps/usbburner.svg
 ln -sfn /usr/lib/usbburner/usbburner.py /usr/bin/usbburner
 rm -rf /usr/local/lib/usbburner /usr/local/bin/usbburner /usr/local/share/applications/usbburner.desktop
 echo "  /usr/bin/usbburner"
@@ -48,4 +49,5 @@ fi
 
 pacman -S --needed --noconfirm xarchiver 7zip >/dev/null && echo "  xarchiver, 7zip"
 update-desktop-database -q /usr/share/applications || true
+gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
 echo "Done. Restart the session (or the compositor) to run the new saforawm; other apps take effect on next start."

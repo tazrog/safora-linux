@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- Safora Image Viewer: a photo with hills and a sun on the Safora purple tile. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a3a6e"/><stop offset="1" stop-color="#241a3a"/></linearGradient>
+    <linearGradient id="cy" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7ff0ea"/><stop offset="1" stop-color="#2bb8c4"/></linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a5f78"/><stop offset="1" stop-color="#1b2f4a"/></linearGradient>
+    <clipPath id="photo"><rect x="22" y="30" width="84" height="64" rx="7"/></clipPath>
+  </defs>
+  <rect x="6" y="6" width="116" height="116" rx="28" fill="url(#tile)"/>
+  <rect x="6.5" y="6.5" width="115" height="115" rx="27.5" fill="none" stroke="#ece8f5" stroke-opacity="0.18"/>
+  <!-- photo -->
+  <rect x="16" y="24" width="96" height="76" rx="11" fill="#ece8f5"/>
+  <g clip-path="url(#photo)">
+    <rect x="22" y="30" width="84" height="64" fill="url(#sky)"/>
+    <circle cx="84" cy="48" r="9" fill="#ffd27a"/>
+    <path d="M22 94 L22 78 L46 56 L64 74 L76 64 L106 88 L106 94 Z" fill="url(#cy)"/>
+    <path d="M22 94 L22 86 L40 74 L58 90 L70 82 L84 94 Z" fill="#1f8f9c"/>
+  </g>
+  <!-- magnifier -->
+  <circle cx="90" cy="88" r="15" fill="#241a3a" stroke="#7ff0ea" stroke-width="6"/>
+  <circle cx="90" cy="88" r="7" fill="none" stroke="#ece8f5" stroke-opacity="0.35" stroke-width="2"/>
+  <path d="M101 99 L112 110" stroke="#7ff0ea" stroke-width="8" stroke-linecap="round"/>
+</svg>

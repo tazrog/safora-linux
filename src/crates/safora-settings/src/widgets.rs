@@ -86,7 +86,7 @@ fn refill(ctx: &Rc<Ctx>, list: &gtk::Box) {
 fn has_settings(kind: &str) -> bool {
     matches!(
         kind,
-        "clock" | "cpu" | "ram" | "disk" | "temperature" | "netspeed" | "network" | "audio" | "bluetooth" | "battery" | "weather" | "claude" | "tray" | "spacer"
+        "apps" | "clock" | "cpu" | "ram" | "disk" | "temperature" | "netspeed" | "network" | "audio" | "bluetooth" | "battery" | "weather" | "claude" | "tray" | "spacer"
     )
 }
 
@@ -295,6 +295,18 @@ fn open_settings(ctx: &Rc<Ctx>, name: &str, from: &impl IsA<gtk::Widget>) {
     match kind.as_str() {
         "cpu" | "ram" | "disk" | "temperature" | "netspeed" => metric_settings(ctx, name, &kind, &o, &body),
         "clock" => clock_settings(ctx, name, &o, &body),
+        "apps" => {
+            body.append(&choice(
+                ctx,
+                name,
+                "Show",
+                &[("", "Programs on all workspaces"), ("workspace", "Only programs on the current workspace")],
+                &o.source,
+                |o| &mut o.source,
+                |_| {},
+            ));
+            body.append(&note("With all workspaces, programs on other workspaces are shown dimmed; clicking one switches to its workspace."));
+        }
         "network" => {
             body.append(&choice(ctx, name, "Show", &[("", "Icon and connection name"), ("icon", "Icon only")], &o.format, |o| &mut o.format, |_| {}));
         }

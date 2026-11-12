@@ -88,6 +88,7 @@ install -Dm755 "$BIN/safora-viewer"     "$PROFILE/airootfs/usr/bin/safora-viewer
 install -Dm755 "$HERE/usbburner/usbburner.py"      "$PROFILE/airootfs/usr/lib/usbburner/usbburner.py"
 install -Dm755 "$HERE/usbburner/usbburner-helper"  "$PROFILE/airootfs/usr/lib/usbburner/usbburner-helper"
 install -Dm644 "$HERE/usbburner/usbburner.desktop" "$PROFILE/airootfs/usr/share/applications/usbburner.desktop"
+install -Dm644 "$HERE/usbburner/usbburner.svg"     "$PROFILE/airootfs/usr/share/icons/hicolor/scalable/apps/usbburner.svg"
 install -Dm755 "$HERE/installer/safora-install-backend" "$PROFILE/airootfs/usr/lib/safora/safora-install-backend"
 cp "$HERE/profile/pacman.conf" "$PROFILE/pacman.conf"
 if [[ $FAST == 1 ]]; then

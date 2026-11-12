@@ -567,7 +567,7 @@ class BurnerWindow(Gtk.ApplicationWindow):
     def on_about(self, _btn):
         Gtk.AboutDialog(
             transient_for=self, modal=True, program_name="USB Burner",
-            version="1.0", logo_icon_name="drive-removable-media",
+            version="1.0", logo_icon_name="usbburner",
             comments="Write Linux distribution images to USB drives for booting.",
             license_type=Gtk.License.GPL_3_0,
         ).present()
@@ -579,6 +579,7 @@ class BurnerApp(Gtk.Application):
 
     def do_startup(self):
         Gtk.Application.do_startup(self)
+        Gtk.Window.set_default_icon_name("usbburner")
         provider = Gtk.CssProvider()
         provider.load_from_data(CSS)
         Gtk.StyleContext.add_provider_for_display(

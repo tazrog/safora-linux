@@ -80,7 +80,7 @@ fn battery_line() -> Option<String> {
     let dir = std::fs::read_dir("/sys/class/power_supply").ok()?;
     for e in dir.flatten() {
         let p = e.path();
-        if std::fs::read_to_string(p.join("type")).ok()?.trim() != "Battery" {
+        if !sys::is_system_battery(&p) {
             continue;
         }
         let cap = std::fs::read_to_string(p.join("capacity")).ok()?;
@@ -508,7 +508,71 @@ pub fn input_page(ctx: &Rc<Ctx>) -> gtk::Box {
     let c = ctx.clone();
     p.append(&row("Ignore the touchpad while typing", &switch(cfg.input.disable_while_typing, move |on| c.update(|cfg| cfg.input.disable_while_typing = on))));
     p.append(&note("Mouse and touchpad changes apply immediately."));
+
+    p.append(&heading("Battery"));
+    p.append(&device_batteries());
     p
+}
+
+/// Battery levels of connected keyboards, mice and other wireless devices, refreshed every 30 s.
+fn device_batteries() -> gtk::Box {
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let fill = {
+        let weak = list.downgrade();
+        move || {
+            let weak = weak.clone();
+            glib::spawn_future_local(async move {
+                let Ok(bats) = gtk::gio::spawn_blocking(sys::read_device_batteries).await else { return };
+                let Some(list) = weak.upgrade() else { return };
+                while let Some(c) = list.first_child() {
+                    list.remove(&c);
+                }
+                if bats.is_empty() {
+                    list.append(&note(
+                        "No connected keyboard or mouse reports its battery. Wired devices have none, and some \
+                         wireless ones do not share their level with the computer.",
+                    ));
+                }
+                for b in bats {
+                    let mut text = match (b.percent, &b.level) {
+                        (Some(pct), _) => format!("{pct}%"),
+                        (None, Some(l)) => l.clone(),
+                        (None, None) => "Unknown".into(),
+                    };
+                    if b.charging {
+                        text.push_str(" (charging)");
+                    }
+                    let value = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                    if let Some(pct) = b.percent {
+                        let bar = gtk::LevelBar::for_interval(0.0, 100.0);
+                        bar.set_value(pct as f64);
+                        bar.set_width_request(120);
+                        bar.set_valign(gtk::Align::Center);
+                        bar.add_offset_value(gtk::LEVEL_BAR_OFFSET_LOW, 20.0);
+                        bar.add_offset_value(gtk::LEVEL_BAR_OFFSET_HIGH, 50.0);
+                        value.append(&bar);
+                    }
+                    let l = gtk::Label::new(Some(&text));
+                    l.set_width_chars(5);
+                    l.set_xalign(1.0);
+                    value.append(&l);
+                    list.append(&row(&b.name, &value));
+                }
+            });
+        }
+    };
+    fill();
+    let weak = list.downgrade();
+    glib::timeout_add_seconds_local(30, move || match weak.upgrade() {
+        Some(l) => {
+            if l.is_mapped() {
+                fill();
+            }
+            glib::ControlFlow::Continue
+        }
+        None => glib::ControlFlow::Break,
+    });
+    list
 }
 
 // ------------------------------------------------------------------------- bluetooth keyboard unlock

@@ -15,7 +15,7 @@ pub fn build(name: &str, ctx: &Rc<Ctx>) -> Option<gtk::Widget> {
     let o = ctx.config.bar.opts(name);
     Some(match widget_kind(name) {
         "workspaces" => workspaces(ctx),
-        "apps" => apps(ctx),
+        "apps" => apps(ctx, &o),
         "clock" => clock(ctx.config.bar.clock_24h, &o),
         "cpu" => cpu(ctx, &o),
         "ram" => ram(ctx, &o),
@@ -187,14 +187,37 @@ fn workspaces(ctx: &Rc<Ctx>) -> gtk::Widget {
 
 fn app_icon(app_id: &str) -> gtk::Image {
     let wanted = app_id.to_lowercase();
-    let icon = gio::AppInfo::all()
-        .into_iter()
-        .find(|a| a.id().is_some_and(|id| id.trim_end_matches(".desktop").to_lowercase() == wanted))
-        .and_then(|info| info.icon());
-    match icon {
+    match app_gicon(&wanted) {
         Some(g) => gtk::Image::from_gicon(&g),
         None => gtk::Image::from_icon_name(if app_id.is_empty() { "application-x-executable-symbolic" } else { &wanted }),
     }
+}
+
+thread_local! {
+    /// Icon found for each (lowercased) app id. The window list is rebuilt on every compositor update,
+    /// so the desktop files are only searched once per app.
+    static APP_ICONS: RefCell<std::collections::HashMap<String, Option<gio::Icon>>> = RefCell::default();
+}
+
+/// The icon of the program whose desktop file is named after `wanted`, or names it in StartupWMClass
+/// (e.g. the window org.safora.Viewer belongs to safora-viewer.desktop).
+fn app_gicon(wanted: &str) -> Option<gio::Icon> {
+    if let Some(hit) = APP_ICONS.with_borrow(|m| m.get(wanted).cloned()) {
+        return hit;
+    }
+    let all = gio::AppInfo::all();
+    let by_id = all.iter().find(|a| a.id().is_some_and(|id| id.trim_end_matches(".desktop").to_lowercase() == wanted));
+    let by_class = || {
+        all.iter().find(|a| {
+            let Some(id) = a.id() else { return false };
+            let kf = glib::KeyFile::new();
+            kf.load_from_data_dirs(format!("applications/{id}"), glib::KeyFileFlags::NONE).is_ok()
+                && kf.string("Desktop Entry", "StartupWMClass").is_ok_and(|c| c.to_lowercase() == wanted)
+        })
+    };
+    let icon = by_id.or_else(by_class).and_then(|info| info.icon());
+    APP_ICONS.with_borrow_mut(|m| m.insert(wanted.to_string(), icon.clone()));
+    icon
 }
 
 /// Title length for each window button: shorter as more windows are open, icons only when crowded.
@@ -225,7 +248,9 @@ fn fit_apps(scroller: &gtk::ScrolledWindow) {
     }
 }
 
-fn apps(ctx: &Rc<Ctx>) -> gtk::Widget {
+/// Open windows: all of them (default), or with `source = "workspace"` only the active workspace's.
+fn apps(ctx: &Rc<Ctx>, o: &WidgetOpts) -> gtk::Widget {
+    let only_active = o.source == "workspace";
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     // The window list only gets the room left over beside the clock and the other modules, and
     // scrolls (mouse wheel) when that is not enough, so it can never run into its neighbours.
@@ -267,8 +292,9 @@ fn apps(ctx: &Rc<Ctx>) -> gtk::Widget {
     ctx.listeners.borrow_mut().push(Box::new(move |s: &State| {
         clear(&row2);
         fit_apps(&sc2);
-        let chars = app_title_chars(s.windows.len());
-        for w in &s.windows {
+        let shown: Vec<_> = s.windows.iter().filter(|w| !only_active || w.workspace == s.active).collect();
+        let chars = app_title_chars(shown.len());
+        for w in shown {
             let b = gtk::Button::new();
             let inner = gtk::Box::new(gtk::Orientation::Horizontal, 6);
             inner.append(&app_icon(&w.app_id));

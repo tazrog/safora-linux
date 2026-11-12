@@ -536,17 +536,178 @@ pub fn parse_battery(uevent: &str) -> Option<Battery> {
     Some(Battery { percent: percent.min(100), charging, full: status == "Full", minutes })
 }
 
+/// True for the computer's own battery; false for mains adapters and for batteries inside
+/// keyboards, mice and other peripherals (which the kernel marks `scope=Device`).
+pub fn is_system_battery(p: &std::path::Path) -> bool {
+    std::fs::read_to_string(p.join("type")).is_ok_and(|t| t.trim() == "Battery")
+        && !std::fs::read_to_string(p.join("scope")).is_ok_and(|s| s.trim() == "Device")
+}
+
 pub fn read_battery() -> Option<Battery> {
     let dir = std::fs::read_dir("/sys/class/power_supply").ok()?;
     for e in dir.filter_map(|e| e.ok()) {
         let p = e.path();
-        if std::fs::read_to_string(p.join("type")).is_ok_and(|t| t.trim() == "Battery") {
+        if is_system_battery(&p) {
             if let Some(b) = std::fs::read_to_string(p.join("uevent")).ok().and_then(|u| parse_battery(&u)) {
                 return Some(b);
             }
         }
     }
     None
+}
+
+/// Battery of a keyboard, mouse or other peripheral.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeviceBattery {
+    pub name: String,
+    /// Exact charge, when the device reports one.
+    pub percent: Option<u32>,
+    /// Coarse level ("Low", "Normal", "Full" …) for devices that report no percentage.
+    pub level: Option<String>,
+    pub charging: bool,
+}
+
+/// First MAC address found in `s` (e.g. inside "hid-aa:bb:cc:dd:ee:ff-battery"), upper-cased.
+fn find_mac(s: &str) -> Option<String> {
+    let b = s.as_bytes();
+    (0..b.len().saturating_sub(16)).filter_map(|i| s.get(i..i + 17)).find(|w| valid_mac(w)).map(str::to_uppercase)
+}
+
+/// Batteries the kernel exposes for HID peripherals (USB / wireless receivers, Logitech
+/// HID++, classic Bluetooth). Returns `(mac if any, battery)`.
+fn sysfs_device_batteries() -> Vec<(Option<String>, DeviceBattery)> {
+    let Ok(dir) = std::fs::read_dir("/sys/class/power_supply") else { return vec![] };
+    let mut out = vec![];
+    for e in dir.flatten() {
+        let p = e.path();
+        let read = |f: &str| std::fs::read_to_string(p.join(f)).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        if read("type").as_deref() != Some("Battery") || read("scope").as_deref() != Some("Device") {
+            continue;
+        }
+        let file = e.file_name().to_string_lossy().into_owned();
+        // The HID device's input node usually carries the friendliest name.
+        let input_name = std::fs::read_dir(p.join("device/input"))
+            .ok()
+            .and_then(|d| d.flatten().find_map(|i| std::fs::read_to_string(i.path().join("name")).ok()))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let name = read("model_name").or(input_name).unwrap_or_else(|| file.clone());
+        let percent = read("capacity").and_then(|c| c.parse::<u32>().ok()).map(|c| c.min(100));
+        let level = read("capacity_level").filter(|l| l != "Unknown");
+        if percent.is_none() && level.is_none() {
+            continue; // device has not reported yet
+        }
+        let charging = read("status").as_deref() == Some("Charging");
+        out.push((find_mac(&file), DeviceBattery { name, percent, level, charging }));
+    }
+    out
+}
+
+/// "Battery Percentage: 0x5a (90)" from `bluetoothctl info`.
+pub fn parse_bt_battery(info: &str) -> Option<u32> {
+    let l = info.lines().find_map(|l| l.trim().strip_prefix("Battery Percentage:"))?;
+    let v = l.rsplit_once('(').map(|(_, r)| r.trim_end_matches(')').trim()).unwrap_or(l.trim());
+    v.parse::<u32>().ok().map(|v| v.min(100))
+}
+
+/// Every BlueZ D-Bus object with its interfaces and properties (`GetManagedObjects`).
+fn bluez_objects() -> serde_json::Value {
+    run("busctl", &["--system", "--json=short", "call", "org.bluez", "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects"])
+        .and_then(|o| serde_json::from_str::<serde_json::Value>(&o).ok())
+        .map(|mut v| v["data"][0].take())
+        .unwrap_or_default()
+}
+
+/// Object paths of the GATT Battery Level characteristics (0x2A19) of the device `mac`.
+pub fn gatt_battery_paths(objects: &serde_json::Value, mac: &str) -> Vec<String> {
+    let dev = format!("/dev_{}/", mac.to_uppercase().replace(':', "_"));
+    let Some(map) = objects.as_object() else { return vec![] };
+    let mut paths: Vec<String> = map
+        .iter()
+        .filter(|(path, _)| path.contains(&dev))
+        .filter(|(_, ifaces)| {
+            ifaces["org.bluez.GattCharacteristic1"]["UUID"]["data"].as_str().is_some_and(|u| u.starts_with("00002a19-"))
+        })
+        .map(|(path, _)| path.clone())
+        .collect();
+    paths.sort();
+    paths
+}
+
+/// Ask the device for its current battery level (one byte, 0–100).
+fn read_gatt_battery(path: &str) -> Option<u32> {
+    let out = run("busctl", &["--system", "--json=short", "call", "org.bluez", path, "org.bluez.GattCharacteristic1", "ReadValue", "a{sv}", "0"])?;
+    let v: serde_json::Value = serde_json::from_str(&out).ok()?;
+    v["data"][0][0].as_u64().filter(|&b| b <= 100).map(|b| b as u32)
+}
+
+/// BlueZ's `Battery1.Percentage` for the device `mac`.
+fn bluez_battery1(objects: &serde_json::Value, mac: &str) -> Option<u32> {
+    let suffix = format!("/dev_{}", mac.to_uppercase().replace(':', "_"));
+    let map = objects.as_object()?;
+    map.iter()
+        .find(|(p, _)| p.ends_with(&suffix))
+        .and_then(|(_, i)| i["org.bluez.Battery1"]["Percentage"]["data"].as_u64())
+        .map(|v| v.min(100) as u32)
+}
+
+/// Last seen (direct read, BlueZ, shown) per device MAC.
+static BT_BATTERY_SEEN: std::sync::Mutex<Vec<(String, Option<u32>, Option<u32>, u32)>> = std::sync::Mutex::new(Vec::new());
+
+/// Pick the reading that changed most recently; a source stuck on an old value loses as
+/// soon as the other one moves. Without history, the direct read wins: BlueZ's value is
+/// read once at connect and goes stale on devices that never send notifications.
+fn pick_bt_battery(mac: &str, live: Option<u32>, bluez: Option<u32>) -> Option<u32> {
+    let mut seen = BT_BATTERY_SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    let prev = seen.iter().position(|s| s.0 == mac);
+    let shown = match prev.map(|i| seen[i].clone()) {
+        Some((_, pl, pb, shown)) => {
+            if live.is_some() && live != pl {
+                live
+            } else if bluez.is_some() && bluez != pb {
+                bluez
+            } else {
+                Some(shown)
+            }
+        }
+        None => live.or(bluez),
+    }?;
+    let entry = (mac.to_string(), live, bluez, shown);
+    match prev {
+        Some(i) => seen[i] = entry,
+        None => seen.push(entry),
+    }
+    Some(shown)
+}
+
+/// Batteries of connected keyboards, mice and other peripherals, from the kernel and BlueZ.
+pub fn read_device_batteries() -> Vec<DeviceBattery> {
+    let sysfs = sysfs_device_batteries();
+    let mut out: Vec<DeviceBattery> = vec![];
+    // Bluetooth LE devices report through BlueZ only; prefer BlueZ's name for BT devices.
+    let connected = run("bluetoothctl", &["devices", "Connected"]).map(|o| parse_bt_devices(&o)).unwrap_or_default();
+    let objects = if connected.is_empty() { serde_json::Value::Null } else { bluez_objects() };
+    let mut bt_macs = vec![];
+    for (mac, name) in connected {
+        // Two sources, and either can go stale depending on the firmware: a direct read of
+        // the device's Battery Level, and BlueZ's Battery1 (connect-time read + notifications).
+        let live = gatt_battery_paths(&objects, &mac).iter().find_map(|c| read_gatt_battery(c));
+        let bluez = bluez_battery1(&objects, &mac)
+            .or_else(|| run("bluetoothctl", &["info", &mac]).and_then(|i| parse_bt_battery(&strip_ansi(&i))));
+        let Some(pct) = pick_bt_battery(&mac, live, bluez) else {
+            continue;
+        };
+        bt_macs.push(mac.to_uppercase());
+        out.push(DeviceBattery { name, percent: Some(pct), level: None, charging: false });
+    }
+    for (mac, b) in sysfs {
+        if mac.is_some_and(|m| bt_macs.contains(&m)) {
+            continue;
+        }
+        out.push(b);
+    }
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out
 }
 
 
@@ -647,6 +808,23 @@ mod tests {
         let c = "POWER_SUPPLY_STATUS=Charging\nPOWER_SUPPLY_CAPACITY=75\nPOWER_SUPPLY_CHARGE_NOW=3000\nPOWER_SUPPLY_CHARGE_FULL=4000\nPOWER_SUPPLY_CURRENT_NOW=2000\n";
         assert_eq!(parse_battery(c).unwrap().minutes, Some(30));
         assert_eq!(parse_battery("POWER_SUPPLY_STATUS=Full\n"), None);
+        assert_eq!(parse_bt_battery("\tName: Mouse\n\tBattery Percentage: 0x5a (90)\n"), Some(90));
+        assert_eq!(parse_bt_battery("\tName: Mouse\n"), None);
+        assert_eq!(find_mac("hid-aa:bb:cc:dd:ee:0f-battery").as_deref(), Some("AA:BB:CC:DD:EE:0F"));
+        assert_eq!(find_mac("hidpp_battery_0"), None);
+        let objs: serde_json::Value = serde_json::from_str(r#"{
+            "/org/bluez/hci0/dev_C4_C5_EE_1D_4E_8F/service0021/char0022": {"org.bluez.GattCharacteristic1": {"UUID": {"type": "s", "data": "00002a19-0000-1000-8000-00805f9b34fb"}}},
+            "/org/bluez/hci0/dev_C4_C5_EE_1D_4E_8F/service0021/char0026": {"org.bluez.GattCharacteristic1": {"UUID": {"type": "s", "data": "00002a4d-0000-1000-8000-00805f9b34fb"}}},
+            "/org/bluez/hci0/dev_11_22_33_44_55_66/service0010/char0011": {"org.bluez.GattCharacteristic1": {"UUID": {"type": "s", "data": "00002a19-0000-1000-8000-00805f9b34fb"}}}
+        }"#).unwrap();
+        assert_eq!(gatt_battery_paths(&objs, "c4:c5:ee:1d:4e:8f"), vec!["/org/bluez/hci0/dev_C4_C5_EE_1D_4E_8F/service0021/char0022"]);
+        assert_eq!(bluez_battery1(&serde_json::json!({"/org/bluez/hci0/dev_C4_C5_EE_1D_4E_8F": {"org.bluez.Battery1": {"Percentage": {"type": "y", "data": 100}}}}), "c4:c5:ee:1d:4e:8f"), Some(100));
+        let m = "TEST:PICK";
+        assert_eq!(pick_bt_battery(m, Some(94), Some(100)), Some(94)); // no history: direct read
+        assert_eq!(pick_bt_battery(m, Some(94), Some(100)), Some(94)); // nothing moved
+        assert_eq!(pick_bt_battery(m, Some(93), Some(100)), Some(93)); // direct read moved
+        assert_eq!(pick_bt_battery(m, Some(93), Some(90)), Some(90)); // BlueZ moved
+        assert_eq!(pick_bt_battery(m, Some(93), Some(90)), Some(90));
     }
 }
 

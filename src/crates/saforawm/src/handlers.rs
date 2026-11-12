@@ -394,6 +394,12 @@ impl PrimarySelectionHandler for SaforaState {
 }
 
 impl OutputHandler for SaforaState {}
+
+impl smithay::wayland::xdg_foreign::XdgForeignHandler for SaforaState {
+    fn xdg_foreign_state(&mut self) -> &mut smithay::wayland::xdg_foreign::XdgForeignState {
+        &mut self.xdg_foreign_state
+    }
+}
 impl PointerConstraintsHandler for SaforaState {}
 
 impl DmabufHandler for SaforaState {

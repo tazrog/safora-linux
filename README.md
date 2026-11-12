@@ -11,7 +11,7 @@ compositor, a GTK4 status bar and a graphical installer with full-disk encryptio
 | `src/crates/safora-bar` | **safora-bar** – GTK4 + layer-shell bar with pluggable widgets. |
 | `src/crates/safora-settings` | **safora-settings** – GTK4 app for looks and layout (writes the config; changes apply live). |
 | `src/crates/safora-installer` | **safora-installer** – GTK4 graphical installer front end. |
-| `src/crates/safora-viewer` | **safora-viewer** – GTK4 image viewer, the default for images: open (file, Ctrl+O, drag and drop), zoom (Ctrl+wheel, pinch, +/−, F fit, 1 actual size), drag to pan, ←/→ through the folder. Themes: Match System (default, follows dark mode live), Light, Dark; background and transparency checkerboard (`~/.config/safora/viewer.toml`). |
+| `src/crates/safora-viewer` | **safora-viewer** – GTK4 image viewer, the default for images: open (folder panel on the left — F9 shows/hides it, with Up/Home/Places and mounted drives; file, Ctrl+O, drag and drop), zoom (Ctrl+wheel, pinch, +/−, F fit, 1 actual size), drag to pan, ←/→ through the folder. Themes: Match System (default, follows dark mode live), Light, Dark; background and transparency checkerboard (`~/.config/safora/viewer.toml`). |
 | `src/crates/safora-common` | Shared config + IPC types. |
 | `distro/` | archiso profile, installer backend script, ISO and VirtualBox helper scripts. |
 

@@ -108,6 +108,10 @@ fn handle_request(state: &mut SaforaState, req: Request, stream: &mut UnixStream
         Request::Focus { id } => {
             if let Some(ws) = state.client_by_id(id).map(|c| c.workspace) {
                 state.switch_workspace(ws);
+                // Picked from the bar's window list: the window gets the keyboard, not the bar.
+                if state.layer_releasable() {
+                    state.layer_focus = None;
+                }
                 state.focus_client(Some(id));
             }
         }

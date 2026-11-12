@@ -1,9 +1,11 @@
 //! safora-viewer — the Safora image viewer.
 //!
-//! `safora-viewer [FILE]` opens an image; without a file it shows an empty window with an Open button.
+//! `safora-viewer [FILE]` opens an image; without a file it shows the folder panel and how to pick or drop an image.
 //! Images can also be opened with Ctrl+O or by dropping them on the window. Zoom with Ctrl+wheel, a touchpad
 //! pinch, the header-bar buttons or the keyboard (+ / − / F fit / 1 actual size); drag to pan; ←/→ step
 //! through the other images in the same folder.
+//!
+//! The folder panel on the left (F9 shows/hides it) browses folders and opens images inside the window.
 //!
 //! The ☰ menu picks the theme (Match System — the default, following Safora Settings' dark mode live —,
 //! Light or Dark), the background behind the image and a checkerboard for transparent images. The choices
@@ -19,6 +21,8 @@ use gtk4 as gtk;
 use gtk::{gdk, gio, glib, graphene, gsk, prelude::*};
 use safora_common::config::Config;
 use serde::{Deserialize, Serialize};
+
+mod files;
 
 type Handler = Box<dyn Fn(&Rc<Viewer>)>;
 
@@ -75,6 +79,7 @@ fn set_accels(app: &gtk::Application) {
         ("win.next", &["Right", "Page_Down", "space"]),
         ("win.prev", &["Left", "Page_Up", "BackSpace"]),
         ("win.fullscreen", &["F11"]),
+        ("win.sidebar", &["F9"]),
         ("win.leave-fullscreen", &["Escape"]),
         ("window.close", &["<Ctrl>w", "<Ctrl>q"]),
     ];
@@ -99,11 +104,16 @@ pub struct Prefs {
     pub background: String,
     /// Draw a checkerboard behind the image so transparent areas are visible.
     pub checkerboard: bool,
+    /// Show the folder panel on the left.
+    pub sidebar: bool,
+    /// The folder the panel showed last (it starts there when no image is opened).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub folder: String,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { theme: "system".into(), background: "theme".into(), checkerboard: true }
+        Self { theme: "system".into(), background: "theme".into(), checkerboard: true, sidebar: true, folder: String::new() }
     }
 }
 
@@ -294,6 +304,7 @@ fn prefs_menu() -> gio::Menu {
     menu.append_section(Some("Background"), &bg);
     let misc = gio::Menu::new();
     misc.append(Some("Open Image…"), Some("win.open"));
+    misc.append(Some("Folder Panel"), Some("win.sidebar"));
     misc.append(Some("Fullscreen"), Some("win.fullscreen"));
     misc.append(Some("Close"), Some("window.close"));
     menu.append_section(None, &misc);
@@ -419,6 +430,7 @@ struct Viewer {
     empty_text: gtk::Label,
     image_actions: Vec<gio::SimpleAction>,
     nav_actions: Vec<gio::SimpleAction>,
+    files: Rc<files::FilePanel>,
     path: RefCell<Option<PathBuf>>,
     siblings: RefCell<Vec<PathBuf>>,
     /// Fit-to-window mode: the zoom follows the window size until the user zooms by hand.
@@ -434,7 +446,7 @@ impl Viewer {
         let window = gtk::ApplicationWindow::builder()
             .application(app)
             .title("Image Viewer")
-            .icon_name("image-x-generic")
+            .icon_name("safora-viewer")
             .default_width(1000)
             .default_height(720)
             .build();
@@ -448,6 +460,12 @@ impl Viewer {
         nav.add_css_class("linked");
         nav.append(&prev_btn);
         nav.append(&next_btn);
+        let side_btn = gtk::ToggleButton::builder()
+            .icon_name("sidebar-show-symbolic")
+            .tooltip_text("Folder panel (F9)")
+            .action_name("win.sidebar")
+            .build();
+        header.pack_start(&side_btn);
         header.pack_start(&open_btn);
         header.pack_start(&nav);
 
@@ -508,24 +526,43 @@ impl Viewer {
         empty_text.add_css_class("title-2");
         empty_text.set_wrap(true);
         empty_text.set_justify(gtk::Justification::Center);
-        let hint = gtk::Label::new(Some("Open an image, or drop one on this window."));
+        let hint = gtk::Label::new(Some(
+            "Pick an image in the folder panel on the left,\nor drag one from your file manager onto this window.\n\nNo panel? Press F9 to show it.",
+        ));
         hint.add_css_class("dim-label");
-        let open_big = gtk::Button::with_label("Open Image…");
-        open_big.add_css_class("suggested-action");
-        open_big.add_css_class("pill");
-        open_big.set_halign(gtk::Align::Center);
-        open_big.set_action_name(Some("win.open"));
+        hint.set_justify(gtk::Justification::Center);
         empty.append(&icon);
         empty.append(&empty_text);
         empty.append(&hint);
-        empty.append(&open_big);
 
         let stack = gtk::Stack::new();
         stack.add_css_class("viewer-view");
         stack.add_named(&empty, Some("empty"));
         stack.add_named(&scroller, Some("image"));
         stack.set_visible_child_name("empty");
-        window.set_child(Some(&stack));
+
+        // Folder panel | image, with a draggable divider.
+        let p = prefs();
+        let start = Some(PathBuf::from(&p.folder))
+            .filter(|d| !p.folder.is_empty() && d.is_dir())
+            .or_else(|| glib::user_special_dir(glib::UserDirectory::Pictures).filter(|d| d.is_dir()))
+            .unwrap_or_else(glib::home_dir);
+        let files = files::FilePanel::new(&start);
+        files.root.set_visible(p.sidebar);
+        files.connect_dir_changed(|dir| {
+            let dir = dir.to_string_lossy().into_owned();
+            if prefs().folder != dir {
+                update_prefs(|p| p.folder = dir);
+            }
+        });
+        let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
+        paned.set_start_child(Some(&files.root));
+        paned.set_end_child(Some(&stack));
+        paned.set_resize_start_child(false);
+        paned.set_shrink_start_child(false);
+        paned.set_shrink_end_child(false);
+        paned.set_position(250);
+        window.set_child(Some(&paned));
 
         let mk = |name: &str| gio::SimpleAction::new(name, None);
         let image_actions: Vec<_> =
@@ -543,12 +580,19 @@ impl Viewer {
             empty_text,
             image_actions,
             nav_actions,
+            files,
             path: RefCell::new(None),
             siblings: RefCell::new(Vec::new()),
             fit: Cell::new(true),
             pending_h: Cell::new(None),
             pending_v: Cell::new(None),
             pointer: Cell::new(None),
+        });
+        let weak = Rc::downgrade(&v);
+        v.files.connect_open(move |path| {
+            if let Some(v) = weak.upgrade() {
+                v.load(path);
+            }
         });
         v.setup_actions();
         v.setup_input();
@@ -579,6 +623,17 @@ impl Viewer {
             if v.window.is_fullscreen() { v.window.unfullscreen() } else { v.window.fullscreen() }
         }));
         add(&simple("leave-fullscreen"), Box::new(|v| v.window.unfullscreen()));
+        let sidebar = gio::SimpleAction::new_stateful("sidebar", None, &prefs().sidebar.to_variant());
+        let w = Rc::downgrade(self);
+        sidebar.connect_activate(move |a, _| {
+            let on = !a.state().and_then(|s| s.get::<bool>()).unwrap_or(true);
+            a.set_state(&on.to_variant());
+            if let Some(v) = w.upgrade() {
+                v.files.root.set_visible(on);
+            }
+            update_prefs(|p| p.sidebar = on);
+        });
+        self.window.add_action(&sidebar);
 
         let handlers: [Handler; 5] = [
             Box::new(|v| v.zoom_step(STEP)),
@@ -769,6 +824,7 @@ impl Viewer {
                 self.pending_h.set(None);
                 self.pending_v.set(None);
                 self.stack.set_visible_child_name("image");
+                self.files.reveal(&path);
                 self.fit.set(true);
                 self.apply_fit();
                 self.scroller.hadjustment().set_value(0.0);
@@ -1011,7 +1067,7 @@ mod tests {
         assert!(p.is_dark(false));
         assert!(!Prefs { theme: "light".into(), ..Prefs::default() }.is_dark(true));
         assert!(Prefs::default().is_dark(true) && !Prefs::default().is_dark(false));
-        let mut bad = Prefs { theme: "neon".into(), background: "plaid".into(), checkerboard: false };
+        let mut bad = Prefs { theme: "neon".into(), background: "plaid".into(), checkerboard: false, ..Prefs::default() };
         bad.sanitize();
         assert_eq!((bad.theme.as_str(), bad.background.as_str()), ("system", "theme"));
         assert_eq!(Prefs::default().background_css(), "");
